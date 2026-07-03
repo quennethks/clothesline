@@ -51,6 +51,11 @@ The repo ships a **dev container** (`.devcontainer/`). Do development inside it 
 
 Backend is a modular monolith (one deployable, split internally by domain: `auth`, `loads`, `media`, `sync`). Frontend Vitest unit tests are colocated in `clothesline-web`; Playwright e2e is its own project so it can drive the built PWA including offline flows.
 
+## Diagrams
+
+- **Prefer Mermaid for all diagrams** — architecture, flows, sequences, state machines, ER diagrams, etc. Use Mermaid as much as possible so diagrams stay version-controlled, diffable, and render inline in Markdown.
+- **If something can't be expressed in a Mermaid graph** (e.g. a rich UI mockup, an annotated screenshot, a free-form layout), **do not silently substitute another format.** Prompt the user first, describing how you intend to illustrate it, and get confirmation on the approach before proceeding.
+
 ## Conventions
 
 - **Dependencies:** backend uses `uv` (`uv add`, `uv run`) with `pyproject.toml` — do not use bare `pip`. Frontend uses the Vite/npm toolchain.
