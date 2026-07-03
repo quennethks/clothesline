@@ -11,7 +11,7 @@
 
 *The real competitor. Free, universal, and the thing to beat.*
 
-| | |
+| Aspect | Notes |
 |---|---|
 | **Does well** | Zero friction, zero cost, works at every shop; the stub is accepted by the shop as the claim token |
 | **Falls short** | Records kilos and price, never contents; no receive-side check; photos/notes are unstructured and get abandoned; useless as dispute evidence — which is why PH law firms tell customers to reconstruct item lists *after* the loss ([Respicio & Co.](https://www.respicio.ph/commentaries/compensation-claim-for-laundry-service-lost-clothes-philippines)) |
@@ -22,7 +22,7 @@
 
 *Proof the need exists; execution and distribution are weak.*
 
-| | |
+| Aspect | Notes |
 |---|---|
 | **Examples** | [Laundry Tracker (krishnas infotech, Google Play)](https://play.google.com/store/apps/details?id=com.krishnasinfotech.laundrytracker&hl=en) — track date, per-cloth counts, vendor rates, mark received, export reports; [Laundry Tracker 2.4 (AppsKraft)](https://laundry-tracker.soft112.com/) — same concept, manage "transactions with your laundry person"; [LaundrySpace (App Store)](https://apps.apple.com/us/app/laundryspace/id6738030788); open-source hobby builds ([GitHub example](https://github.com/Alphaspiderman/Laundry-Tracker)) |
 | **Does well** | Closest feature match to our concept: item counts, vendor rates, give/receive reconciliation flows, pending-transaction check-off, date-wise reports. These apps digitize the Indian *dhobi diary* — the paper ledger households keep with their laundry person — proving the give/receive-reconcile flow is a real, recurring consumer job |
@@ -34,7 +34,7 @@
 
 *Powerful, wrong-shaped, and priced for businesses.*
 
-| | |
+| Aspect | Notes |
 |---|---|
 | **Does well** | Mature item cataloging: photos, folders, QR/barcode, exports; polished apps; ~90% satisfaction across 986 reviews on aggregate review sites ([Research.com](https://research.com/software/reviews/sortly)) |
 | **Falls short** | Built for stockrooms, not send/receive loops — no "load", no counterparty, no reconciliation event. Top complaints: **subscription hikes of 300%+** and removal of affordable personal tiers, **data loss after updates** ("all of my items except one were completely deleted"), ads in the free tier, weak support follow-up ([JustUseApp reviews](https://justuseapp.com/en/app/529353551/sortly-inventory-simplified/reviews), [App Store reviews](https://apps.apple.com/us/app/sortly-inventory-simplified/id529353551?see-all=reviews&platform=iphone)) |
@@ -45,7 +45,7 @@
 
 *Adjacent job: they know what you own, not what you handed to the shop.*
 
-| | |
+| Aspect | Notes |
 |---|---|
 | **Does well** | Beautiful garment catalogs with AI background removal; outfit planning, cost-per-wear analytics (Stylebook), 10M+ claimed users (Whering); Indyx free tier is generous with strong auto-tagging ([Nouva comparison](https://www.nouva.app/blog/best-wardrobe-apps-2026-comparison), [Indyx comparison](https://www.myindyx.com/blog/the-best-wardrobe-apps)) |
 | **Falls short** | No concept of custody: nothing tracks garments *leaving* the house and *coming back*; cataloging a full closet is hours of upfront work (our app needs 60 seconds per load); no dispute/evidence angle |
@@ -62,7 +62,7 @@
 
 **On-demand service apps** — [Rinse](https://www.rinse.com/) (US$70M+ raised; wash-and-fold at **US$2.99/lb ≈ ₱405/kg — 5–9× Metro Manila's ₱45–80/kg**): BBB complaints of **lost items, neighbors' laundry picked up by mistake, wrong-address delivery, ₱600-equivalent token credits**, and refunds only after the customer supplies proof ([BBB](https://www.bbb.org/us/ca/san-francisco/profile/dry-cleaners/rinse-inc-1116-542458/complaints), [Honest Brand Reviews](https://www.honestbrandreviews.com/reviews/rinse-review/), [Whisk review](https://whisklaundry.com/blog/rinse-laundry-review-pricing/)). [Laundryheap](https://www.laundryheap.com/) and gig-marketplace [Poplin](https://poplin.co/) (US$10M raised as SudShare) track *order status*, not items — lost/mixed items are a common complaint class in gig laundry. **Metro Manila has no dominant on-demand laundry app**: small locals exist ([Washwell](https://www.washwell.ph/pricing), [Lalaba](https://app.lalaba.ph/), [Laundrify PH](https://play.google.com/store/apps/details?id=ph.laundrify.customer), Mr. Jeff, GoodWork — [Globe blog](https://www.globe.com.ph/blog/home-service-apps-for-chores)), but most shop pickup/delivery is improvised via **GrabExpress/Lalamove couriers and Facebook Messenger booking** ([Triple i Consulting](https://www.tripleiconsulting.com/how-start-laundromat-business-philippines/)) — a *longer* hand-off chain (customer → courier → shop) that makes item verification more valuable, with nobody providing it.
 
-| | |
+| Aspect | Notes |
 |---|---|
 | **Does well** | Real order lifecycle (pickup → wash → deliver), notifications, payments; CleanCloud even offers branded customer apps for shops |
 | **Falls short** | **The shop controls the record.** Itemization (if any) reflects what the *shop* logged, vanishes when you switch shops, and covers only the ~1 shop in thousands that pays for the POS. Disputes remain "your word vs. their system." And the funded services *still* lose items |
