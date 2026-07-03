@@ -9,7 +9,7 @@ Business documentation for a mobile app that lets laundry-service customers item
 | 1 | [Problem Statement](./01-problem-statement.md) | The lost-laundry problem, who feels it, cost of the problem, current alternatives, proposed send/receive workflow, success criteria |
 | 2 | [Target Customer](./02-target-customer.md) | Primary persona (demographics, goals, frustrations, online hangouts, current tools) + deep research: 10+ real people with cited quotes, their communities, and what they already pay for |
 | 3 | [Market Research](./03-market-research.md) | TAM / SAM / SOM in ₱ (top-down + bottom-up), analyst reports, laundry-shop counts and average spend, 3 funded startups with raise amounts, ₱61M / ₱614M / ₱6.1B opportunity framing |
-| 4 | [Competitive Analysis](./04-competitive-analysis.md) | Top 5 competitors/substitutes with ratings, complaints, pricing, and funding; feature gap matrix; positioning quadrant; the one thing none of them does well |
+| 4 | [Competitive Analysis](./04-competitive-analysis.md) | Top 5 competitors/substitutes with ratings, complaints, pricing, and funding; a Philippine local-landscape deep-dive (local apps, PH POS ecosystem, chains/franchises, informal economy); feature gap matrix; positioning quadrants; the one thing none of them does well |
 | — | [deep-research/](./deep-research/README.md) | Archived source docs from a separate Claude deep-research run (3 Jul 2026), kept for provenance; validated content merged into docs 1–4, which supersede them where figures differ |
 
 ## Conventions & methodology

@@ -38,7 +38,7 @@ Other analyst coverage of this market, for deeper diligence: [Euromonitor — La
 | Their annual laundry spend | ₱7,200–₱14,400/household (₱600–₱1,200/mo) | Weekly 4–8 kg at ₱45–₱80/kg; ₱150–₱300/visit |
 | **Metro Manila outsourced-laundry spend pool** | **≈ ₱8–17B/yr** | 1.0–1.4M households × spend (implies national Statista figure undercounts informal shops — common for PH services data) |
 
-**Monetization assumptions for the app:** freemium consumer app, premium at **₱99/month (₱1,188/yr)** with a typical utility-app free→paid conversion of **4–8%**; later B2B shop subscription at **₱1,200–₱3,500/month** (sizing model uses the ₱1,200/mo entry tier = ₱14,400/yr) — undercutting CleanCloud's current US$75–325/store/month (≈ ₱4,600–₱20,000) by 3–10× ([CleanCloud pricing](https://cleancloudapp.com/pricing), [Merchant Maverick](https://www.merchantmaverick.com/best-laundromat-pos/)).
+**Monetization assumptions for the app:** freemium consumer app, premium at **₱99/month (₱1,188/yr)** with a typical utility-app free→paid conversion of **4–8%**; later B2B shop subscription at **₱1,200–₱3,500/month** (sizing model uses the ₱1,200/mo entry tier = ₱14,400/yr) — undercutting CleanCloud's current US$75–325/store/month (≈ ₱4,600–₱20,000) by 3–10× ([CleanCloud pricing](https://cleancloudapp.com/pricing), [Merchant Maverick](https://www.merchantmaverick.com/best-laundromat-pos/)). *Caveat from the local scan (doc 04 §2.2): local PH POS already sells at ₱0–999/mo, so the B2B offer is a verification add-on/badge priced ₱300–₱1,000/mo, not a POS replacement — treat ₱1,200/mo as the blended ceiling in the model.*
 
 ## 3. TAM / SAM / SOM (annual revenue potential, ₱)
 
