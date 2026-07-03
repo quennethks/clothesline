@@ -14,9 +14,10 @@
 | **Age / life stage** | 28–38, single or newly married, no household help |
 | **Location** | Rented or owned condo/apartment in Makati, BGC/Taguig, Ortigas, or Quezon City — Metro Manila's 14.0M-person urban core ([PSA 2024 Census](https://psa.gov.ph/content/highlights-national-capital-region-ncr-population-2024-census-population-2024-popcen)) |
 | **Work** | Mid-level professional — marketing, BPO team lead, software developer, finance analyst, nurse on rotating shifts. Hybrid schedule, long commutes |
-| **Income** | ₱40,000–₱120,000/month household income; time-poor rather than cash-poor |
-| **Living situation** | No in-unit washer/dryer, or a shared building laundry room she avoids; building rules often prohibit hanging laundry on balconies |
-| **Laundry behavior** | Sends 4–8 kg weekly to a nearby per-kilo shop (₱45–₱80/kg, [LaundryAtlas](https://laundryatlas.com/blog/how-much-does-laundry-cost-philippines)) or books a pickup service; spends **₱300–₱1,000+/month** |
+| **Income** | ₱30,000–₱120,000/month household income; time-poor rather than cash-poor |
+| **Living situation** | No in-unit washer/dryer, or a shared building laundry room she avoids; building rules often prohibit hanging laundry on balconies — the exact demand driver the industry itself cites: laundromats serve "busy professionals, students, and households lacking access to personal washing machines" ([Triple i Consulting](https://www.tripleiconsulting.com/how-start-laundromat-business-philippines/)) |
+| **Laundry behavior** | Sends 4–8 kg weekly to a nearby per-kilo shop (budget ₱23–₱35/kg, standard ₱45–₱80/kg, ₱150–₱200 minimum charge — [LaundryAtlas](https://laundryatlas.com/blog/how-much-does-laundry-cost-philippines), [Flexwasher](https://www.flexwasher.com/profitable-laundry-business-in-philippines/)) or books a pickup service; spends **₱500–₱1,200/month** |
+| **Devices & apps** | Android-first mid-range smartphone; heavy user of GCash/Maya, Grab, Shopee/Lazada — comfortable paying through apps |
 
 ### Goals
 
@@ -29,13 +30,14 @@
 
 1. **"Parang may kulang." ("Something feels missing.")** — The bundle comes back plastic-wrapped and folded; she can't tell if all 8 pairs of socks made it home without unpacking everything, which she never does at the counter.
 2. Discovering a missing blouse **two weeks later**, when the shop's answer is inevitably "wala kaming nakita" ("we didn't see anything").
-3. The claim stub records **3.5 kg**, not "1 CK blouse, 6 Uniqlo shirts…". Kilos are useless in a dispute.
-4. Shops that don't answer calls or texts about a missing item (documented pattern — see evidence #1 below).
-5. Filing a DTI complaint or small claim requires an itemized list with values — which she doesn't have ([Respicio & Co.](https://www.respicio.ph/commentaries/compensation-claim-for-laundry-service-lost-clothes-philippines)).
+3. The claim stub records **"7.5 kg / 32 pcs"**, not "1 CK blouse, 6 Uniqlo shirts…". Weight and total piece count are useless for identifying *which* pieces — and the shop's count at drop-off doesn't always match what she believes she sent.
+4. Shops that don't answer calls or texts about a missing item (documented pattern — see evidence #1 below), and "not responsible for loss" signage that's largely void under PH consumer law but works as a bluff on customers without records ([Respicio & Co.](https://www.respicio.ph/commentaries/compensation-claim-for-laundry-service-lost-clothes-philippines)).
+5. Filing a DTI complaint or small claim requires an itemized list with values — which she doesn't have. Office wear is expensive to replace: the legal primer's own sample demand letter itemizes a **₱4,950 Zara blazer and ₱1,290 Uniqlo shirts** as a typical lost-laundry claim ([Respicio & Co.](https://www.respicio.ph/commentaries/compensation-claim-for-laundry-service-lost-clothes-philippines)).
 
 ### Where she hangs out online
 
-- **Reddit:** r/Philippines, r/adultingph, r/AskPH, r/phinvest (adulting/condo-living advice threads)
+- **Reddit:** r/Philippines, r/adultingph, r/AskPH, r/phinvest, r/PHcareers, r/manila (adulting/condo-living/service-recommendation threads)
+- **X/Twitter:** venting about services and tagging brands in complaints
 - **Facebook:** condo/building resident groups, Free Legal Advice PH (350k+ members ask exactly these questions — [example post](https://www.facebook.com/groups/freelegaladvice/posts/24512876708337203/)), neighborhood buy-and-sell groups where laundry shops advertise
 - **Forums:** [PinoyExchange Home & Garden](https://www.pinoyexchange.com/discussion/411774/laundry-service), [TripAdvisor Manila forum](https://www.tripadvisor.com/ShowTopic-g298573-i3261-k6851347-Laundry_shops-Manila_Metro_Manila_Luzon.html) (for expats/travelers)
 - **TikTok / YouTube:** condo-living hacks, #adultingph content
@@ -75,7 +77,7 @@ journey
 - **The laundry itself:** ₱300–₱1,000+/month, recurring, non-negotiable ([LaundryAtlas](https://laundryatlas.com/blog/how-much-does-laundry-cost-philippines); per-visit spend ₱150–₱300, [FilipiKnow](https://filipiknow.net/laundry-business-philippines/))
 - **Convenience premiums:** pickup/delivery laundry services in Metro Manila (e.g., [Washwell](https://www.washwell.ph/pricing), [Lalaba](https://app.lalaba.ph/), [Laundrify PH](https://play.google.com/store/apps/details?id=ph.laundrify.customer)) — she'll pay above walk-in per-kilo rates to not carry the bag
 - **App subscriptions:** streaming, cloud storage, and productivity apps in the ₱99–₱250/month band are normal for this segment; wardrobe apps monetize at comparable prices globally (Whering ≈ ₱429/month, Stylebook ≈ ₱368 one-time — see [`04-competitive-analysis.md`](./04-competitive-analysis.md))
-- **Implication:** a laundry-tracking app is monetizable at **₱0 free tier + ₱49–₱99/month premium**, i.e., a fraction of one laundry load per month.
+- **Implication:** a laundry-tracking app is monetizable at **₱0 free tier + ₱49–₱99/month premium**, i.e., a fraction of one laundry load per month. The core value anchor: **replacing a single lost office shirt (₱800–₱1,500) costs more than a full year of a ₱99/month subscription** — and the legal primer's sample claim (₱9,720 for one blazer and three shirts, [Respicio & Co.](https://www.respicio.ph/commentaries/compensation-claim-for-laundry-service-lost-clothes-philippines)) equals eight years of it.
 
 ---
 
@@ -97,6 +99,23 @@ journey
 | 10 | **Nomad, Philippines Expats Forum** | [philippines-expats.com](https://www.philippines-expats.com/topic/35179-philippine-laundry-service/) | Ten years nomadic across 43 countries: weekly laundry was an **"unanticipated problem"** — hotel per-piece pricing so bad that *"washing and drying one pair of socks often costs more than buying new ones,"* pushing him to local per-kilo shops (and their tracking problem). | ✅ |
 | 11 | **PinoyExchange posters, "Laundry Service" thread** | [PinoyExchange Home & Garden](https://www.pinoyexchange.com/discussion/411774/laundry-service) | Long-running Filipino forum thread swapping laundry-shop recommendations and warnings — the pre-Reddit home of "which shop won't lose my clothes?" | ⚠️ |
 | 12 | *(counter-example)* **Wash ME Laundromat, Agusan del Sur** | [PEP.ph, 17 Jan 2022](https://www.pep.ph/news/kuwentong-kakaiba/163262/honesty-laundry-shop-agusan-del-sur-a717-20220117) | A shop went **viral** simply for returning money and jewelry found in customers' pockets — *"pinusuan ng netizens"* ("netizens reacted with heart/love emojis"). That basic honesty is newsworthy proves how low baseline trust is. | ✅ |
+
+### Recurring complaint patterns (directional — from community scans)
+
+Beyond the linked individuals above, a parallel deep-research pass over PH online communities (r/Philippines, r/adultingph, condo Facebook groups) surfaced these **recurring patterns** — paraphrased, not quoted, because Reddit/X posts are not reliably indexable from this environment:
+
+1. Items discovered missing days or weeks after pickup, with the shop denying responsibility for lack of proof.
+2. Piece-count disagreements at drop-off ("they said 28 pcs, I counted 30 at home").
+3. Damaged or **swapped** items — receiving someone else's similar garment.
+4. Advice threads recommending exactly the manual workarounds above (photograph the pile, list items in Notes) — users already attempt this job with inferior tools.
+5. Shop recommendations framed around trustworthiness — *"hindi nawawalan ng damit"* ("doesn't lose clothes") — rather than price, signaling item security is a selection criterion.
+
+A 30-minute manual scan of these communities (logged-in Reddit/Facebook search) is the recommended next step to convert these patterns into quotable citations.
+
+### Secondary personas (later phases)
+
+- **The multi-household manager** — sends laundry for a family or shared unit; higher item volume, higher stakes per load.
+- **The laundry shop owner (B2B pivot)** — small Metro Manila shop grossing ₱30K–₱100K/month at 20–40% margins ([Digido](https://digido.ph/articles/laundry-business-philippines)) that wants to *offer* verified itemized intake as a trust differentiator. Activates the B2B phase in [`03-market-research.md`](./03-market-research.md).
 
 ### The systemic paper trail (beyond individuals)
 
@@ -138,6 +157,9 @@ mindmap
 - [PSA — Highlights of the NCR Population, 2024 Census of Population](https://psa.gov.ph/content/highlights-national-capital-region-ncr-population-2024-census-population-2024-popcen)
 - [LaundryAtlas — How Much Does Laundry Cost in the Philippines?](https://laundryatlas.com/blog/how-much-does-laundry-cost-philippines)
 - [FilipiKnow — Laundry Business Philippines 2025](https://filipiknow.net/laundry-business-philippines/)
+- [Flexwasher — Is the Laundry Business Profitable in the Philippines?](https://www.flexwasher.com/profitable-laundry-business-in-philippines/)
+- [Triple i Consulting — Laundromat Business Philippines Guide](https://www.tripleiconsulting.com/how-start-laundromat-business-philippines/)
+- [Digido — Why Laundry Business Is a Good Business in the Philippines](https://digido.ph/articles/laundry-business-philippines)
 - [Is It Clean — Philippine Laundry Outlook 2026](https://isitcleanph.com/2026/02/21/is-it-clean-unveils-key-findings-of-1st-philippine-laundry-outlook/)
 - [anythingbykate — Laundry Shops in the Philippines are the worst](https://anythingbykate.wordpress.com/2015/03/30/laundry-shops-in-the-philippines-are-the-worst/)
 - [Facebook — Free Legal Advice group post](https://www.facebook.com/groups/freelegaladvice/posts/24512876708337203/) · [Laundry-business group post](https://www.facebook.com/groups/256527077319261/posts/818056974499599/)
