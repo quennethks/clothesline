@@ -34,28 +34,26 @@ The defining technical constraint from the PRD is **offline-first at the counter
 
 ### 2.1 Component view
 
-```
-                         ┌──────────────────────────────────────────┐
-                         │        Aspire AppHost (aspire.dev)         │
-                         │  local orchestration + azd provisioning    │
-                         └──────────────────────────────────────────┘
-                                          │ describes / wires
-        ┌─────────────────────────────────┼──────────────────────────────────┐
-        ▼                                 ▼                                    ▼
-┌────────────────┐              ┌────────────────────┐              ┌────────────────────┐
-│  Frontend PWA  │  HTTPS/JSON  │   Backend API      │   TCP        │   PostgreSQL       │
-│  React + Vite  │ ───────────► │   FastAPI (uv)     │ ───────────► │   (loads, users)   │
-│  service worker│ ◄─────────── │   /api/v1/*        │              └────────────────────┘
-│  IndexedDB     │   sync       │                    │   HTTPS
-└────────────────┘              │                    │ ───────────► ┌────────────────────┐
-        ▲                       └────────────────────┘              │  Blob Storage      │
-        │ installable / offline           │                        │  (photos)          │
-        │                                  │ email                  └────────────────────┘
-   user's phone                            ▼
-                                 ┌────────────────────┐
-                                 │  Email provider    │
-                                 │  (magic link/OTP)  │
-                                 └────────────────────┘
+```mermaid
+flowchart TB
+    subgraph host["Aspire AppHost (aspire.dev)"]
+        hostnote["local orchestration + azd provisioning"]
+    end
+
+    web["Frontend PWA<br/>React + Vite<br/>service worker + IndexedDB<br/>(installable / offline)"]
+    api["Backend API<br/>FastAPI (uv)<br/>/api/v1/*"]
+    db[("PostgreSQL<br/>loads, users")]
+    blob[("Blob Storage<br/>photos")]
+    email["Email provider<br/>magic link / OTP"]
+
+    host -. describes / wires .-> web
+    host -. describes / wires .-> api
+    host -. describes / wires .-> db
+
+    web <-->|"HTTPS/JSON · sync"| api
+    api -->|TCP| db
+    api -->|HTTPS| blob
+    api -->|email| email
 ```
 
 ### 2.2 Runtime containers (Azure Container Apps)
@@ -161,11 +159,15 @@ The same logical model exists on the client (IndexedDB) and server (Postgres). T
 
 ### 4.2 Load state machine
 
-```
-create ──► draft ──(mark sent)──► sent ──(enter received count)──► closed
-                                    │
-                                    └─ match  → close immediately
-                                    └─ mismatch → item check-off → close
+```mermaid
+stateDiagram-v2
+    [*] --> draft: create
+    draft --> sent: mark sent (freezes total_sent)
+    sent --> closed: received == sent (match, close immediately)
+    sent --> checkoff: received != sent (mismatch)
+    checkoff --> closed: item-by-item check-off
+    closed --> closed: optional home reconcile (sets reconciled)
+    closed --> [*]
 ```
 - `total_sent` is frozen when the load transitions `draft → sent` (PRD §3.6: manifest becomes the source of truth).
 - Optional home reconcile (PRD §3.8) can set `reconciled = true` on an already-`closed` load without changing status.
