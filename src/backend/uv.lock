@@ -176,6 +176,11 @@ requires-dist = [
 name = "clothesline-backend-workspace"
 version = "0.0.0"
 source = { virtual = "." }
+dependencies = [
+    { name = "clothesline-api" },
+    { name = "clothesline-db" },
+    { name = "clothesline-tests" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -187,6 +192,11 @@ dev = [
 ]
 
 [package.metadata]
+requires-dist = [
+    { name = "clothesline-api", editable = "clothesline_api" },
+    { name = "clothesline-db", editable = "clothesline_db" },
+    { name = "clothesline-tests", editable = "clothesline_tests" },
+]
 
 [package.metadata.requires-dev]
 dev = [

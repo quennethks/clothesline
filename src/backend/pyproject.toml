@@ -2,7 +2,16 @@
 name = "clothesline-backend-workspace"
 version = "0.0.0"
 requires-python = ">=3.12"
-dependencies = []
+# The root project depends on every workspace member so a bare `uv sync`
+# run from this directory (as Aspire's AddUvicornApp installer does) installs
+# everything into the one shared .venv here — not just this trivial root
+# project's own (otherwise empty) dependency list.
+dependencies = ["clothesline-db", "clothesline-api", "clothesline-tests"]
+
+[tool.uv.sources]
+clothesline-db = { workspace = true }
+clothesline-api = { workspace = true }
+clothesline-tests = { workspace = true }
 
 [tool.uv.workspace]
 members = ["clothesline_db", "clothesline_api", "clothesline_tests"]

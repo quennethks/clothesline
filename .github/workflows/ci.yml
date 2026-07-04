@@ -38,3 +38,15 @@ jobs:
       - run: npm run typecheck
       - run: npm run test
       - run: npm run build
+
+  apphost-build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: aspire/Clothesline.AppHost
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - run: dotnet build apphost.cs

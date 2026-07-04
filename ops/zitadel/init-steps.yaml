@@ -1,0 +1,8 @@
+FirstInstance:
+  Org:
+    LoginClient:
+      Machine:
+        Username: login-client
+        Name: Automatically Initialized IAM Login Client
+      Pat:
+        ExpirationDate: "2519-04-01T08:45:00Z"
