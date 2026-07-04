@@ -165,7 +165,14 @@ Notes:
 
 ## 4. Data model
 
-The same logical model exists on the client (IndexedDB) and server (Postgres). The client is authoritative during an offline session; the server is authoritative once synced.
+The same logical model exists on the client (RxDB, backed by IndexedDB) and the server (Postgres). The client is authoritative during an offline session; the server is authoritative once synced. **Each entity below is also an RxDB collection** of the same snake_case plural name (`loads`, `load_item_categories`, `load_items`, `photos`, `photo_links`) and replicates via `/sync/{collection}` (§5.2, §7); the frontend's RxDB `jsonSchema` for each is **derived from these tables** and lives in `clothesline-web` (not duplicated here).
+
+**Wire/sync convention (applies to every synced entity):**
+- `updated_at` crosses the wire as an **integer epoch-milliseconds** value, **authored by the server** on every write; it drives the replication checkpoint (ordered by `updated_at`, then `id`).
+- Soft delete is expressed on the wire as **`_deleted`** (boolean tombstone) mapped from the row's `deleted_at`; deleted rows still replicate.
+- `id` (client-generated uuid) is the primary key and the checkpoint tiebreaker.
+
+`User` is the exception — it is **not** an RxDB collection and does not replicate; it's a server-only mirror read via `GET /auth/me`.
 
 ### 4.1 Entities
 
@@ -220,11 +227,12 @@ The same logical model exists on the client (IndexedDB) and server (Postgres). T
 | field | type | notes |
 |---|---|---|
 | id | uuid | pk, client-generated |
-| blob_key | text | key in Blob Storage; null until upload completes |
-| local_only | bool | client-side flag: captured offline, not yet uploaded |
+| blob_key | text | key in Blob Storage; null until upload completes. A non-null `blob_key` is the signal that bytes exist |
 | content_type | text | e.g. image/webp |
 | created_at / updated_at | timestamptz | |
 | deleted_at | timestamptz? | soft delete for sync |
+
+> `local_only` is a **client-only** staging flag (bytes captured but not yet uploaded) — it lives in RxDB but is **not** part of the synced document; the server never sees it.
 
 **PhotoLink** — junction linking a `Photo` to any entity it's attached to. Polymorphic and **many-to-many capable** by design (a photo can attach to several entities; an entity can hold several photos), so per-item photo galleries and richer attachments grow without a schema change.
 | field | type | notes |
@@ -296,71 +304,83 @@ src/backend/
     ├── main.py                app factory, router mounting, middleware
     ├── config.py              settings from env (Aspire-injected)
     ├── auth/                  OIDC/JWKS token validation + minimal user upsert
-    ├── loads/                 loads + items + reconcile (core domain)
-    ├── media/                 photo upload URLs + blob integration
-    ├── sync/                  batch pull/push sync endpoint
-    └── common/                errors, pagination, dependencies
+    ├── sync/                  generic /sync/{collection} pull+push handlers
+    ├── domain/                per-collection validators/invariants (push-time rules)
+    ├── media/                 pre-signed Blob upload/read URLs
+    └── common/                errors, dependencies, user scoping
 ```
 
-Each domain package holds `router.py` (HTTP), `service.py` (business logic), and `schemas.py` (Pydantic), and **imports its ORM models from `clothesline_db`**. Services are unit-testable without HTTP. The `auth/` package no longer *issues* tokens — it validates the bearer JWT against Zitadel and upserts the minimal user row (§5.5).
+The app is **local-first**: the client (RxDB) is the system of record during a session and the API is a **replication target + photo-bytes broker + auth mirror**, not a REST CRUD surface. Accordingly:
+- **`sync/`** implements one **generic pull/push handler** parameterized by `{collection}` (all synced tables share the `id`/`updated_at`/`deleted_at` shape), dispatching to
+- **`domain/`** for per-collection **push-time validation** — user ownership plus business invariants (e.g. freezing `total_sent` at send, rejecting edits to a sent manifest). This is where "loads logic" now lives — enforced when a document arrives, not as REST actions.
+- **`auth/`** validates the bearer JWT against Zitadel and upserts the minimal user row (§5.5); it never issues tokens.
+Packages import ORM models from `clothesline_db`; services are unit-testable without HTTP.
 
 ### 5.2 API surface (`/api/v1`)
 
-All endpoints require a valid **Zitadel-issued access token** (bearer JWT), validated against Zitadel's JWKS. There are **no token-issuing endpoints** in our API — authentication happens at Zitadel (§5.5).
+The backend is **local-first**, so the surface is small: an **RxDB replication contract** (`/sync/{collection}`), a **media** pair for photo bytes, and **`/auth/me`**. There is **no REST CRUD** for loads/items — creating, itemizing, sending, receiving, reconciling and duplicating are **local RxDB writes** whose effects replicate through `/sync` (§5.3, §5.4). All requests carry `Authorization: Bearer <Zitadel access token>`; the server derives the user and **scopes every row** to them (§5.5). Field casing is **snake_case** end-to-end; document shapes are defined once in §4.1 and referenced here. Replication semantics (checkpoints, tombstones, conflicts) are in §7.
+
+**Sync — RxDB replication** (`collection ∈ {loads, load_item_categories, load_items, photos, photo_links}`)
+
+`GET /sync/{collection}` — **pull**
+| in (query) | type | notes |
+|---|---|---|
+| `id` | string | checkpoint id; omit on first sync |
+| `updated_at` | number | checkpoint ts (epoch ms); omit on first sync |
+| `batch_size` | number | max docs to return |
+
+```jsonc
+// 200 — docs written strictly after the checkpoint (incl. _deleted tombstones), user-scoped,
+// ordered by (updated_at ASC, id ASC). Doc shapes per §4.1.
+{ "documents": [ /* <collection> docs */ ], "checkpoint": { "id": "…", "updated_at": 1751600000000 } }
+```
+
+`POST /sync/{collection}` — **push** (idempotent upsert by `id`)
+```jsonc
+// body: change rows
+[ { "new_document_state": { /* … */ }, "assumed_master_state": { /* … */ } | null } ]
+// 200 — CONFLICTS ONLY: current server doc for each row whose stored state != assumed_master_state
+[ /* current master docs */ ]
+```
+Per row the server: loads the current doc; if it differs from `assumed_master_state` → **conflict** (return current master, don't apply); else applies the write, **sets `updated_at` = server now**, maps `_deleted → deleted_at`, and runs the **per-collection validator** (ownership + invariants). Invariant violations are returned **as conflicts** (authoritative doc back) so an illegal local write is reverted on the next merge.
+
+> The live **pull-stream (SSE)** is **deferred to Phase 3**; MVP uses pull-on-reconnect + interval polling (§7).
+
+**Media** (photo bytes never travel through `/sync`)
+| method | path | purpose |
+|---|---|---|
+| POST | `/media/upload-url` | body `{photo_id, content_type}` → `{blob_key, upload_url, expires_at}`. Client PUTs bytes to `upload_url`, then sets `blob_key` on the local `photos` doc (which syncs). |
+| GET | `/media/{photo_id}` | `{url, expires_at}` — short-lived read SAS; user-scoped. |
 
 **Identity**
 | method | path | purpose |
 |---|---|---|
 | GET | `/auth/me` | current user from the validated token; upserts the minimal `User {id, sub, email}` row on first call. |
 
-**Loads (PRD §4.2–4.8)**
-| method | path | purpose |
-|---|---|---|
-| GET | `/loads` | list current user's loads (home screen). |
-| POST | `/loads` | create a load (accepts client-generated id, `name` defaulting to today's date, optional shop fields, and the pre-seeded template categories). |
-| GET | `/loads/{id}` | full load with categories, items + photos. |
-| PATCH | `/loads/{id}` | edit header (name, optional shop fields) / category counts / add-remove categories while `draft`. |
-| POST | `/loads/{id}/send` | freeze manifest, `draft → sent`. |
-| POST | `/loads/{id}/receive` | body `{total_received}` (number) or `{skip: true}`. Entered → `match` (sets `closed`) or `mismatch`; **skip → routes to the per-category check** (§5.4). |
-| POST | `/loads/{id}/reconcile` | submit per-category `count_received` check-off; closes load (mismatch/skip path) or records optional home reconcile. |
-| POST | `/loads/{id}/duplicate` | server-side duplicate (carries categories only; see §5.3). |
-| DELETE | `/loads/{id}` | soft delete. |
+**Errors:** `{ "error": { "code", "message" } }`; `401` (refresh + retry), `403` (cross-user), `404` (unknown collection/photo), `422` (malformed document).
 
-**Media (PRD §4.5)**
-| method | path | purpose |
-|---|---|---|
-| POST | `/loads/{id}/photos` | register a photo for an entity (`{entity_type, entity_id}`), returns a **pre-signed Blob upload URL**; creates the `Photo` + `PhotoLink`. For a category photo it **auto-creates a `LoadItem`** (name = category) and links to it (§4.4). |
-| GET | `/loads/{id}/photos` | gallery: all photos linked to the load and its categories/items (read SAS URLs). |
-| GET | `/loads/{id}/photos/{pid}` | returns a short-lived read SAS URL for one photo. |
-| DELETE | `/loads/{id}/photos/{pid}` | soft-delete the photo + its links; in `auto` mode this also decrements the category count (§4.4). |
+### 5.3 Duplicate semantics (PRD §4.4) — a local operation
 
-**Sync (offline, §7)**
-| method | path | purpose |
-|---|---|---|
-| POST | `/sync` | batch: client pushes local mutations since `cursor` and pulls server changes since `cursor`. Returns new cursor. |
-
-### 5.3 Duplicate semantics (PRD §4.4)
-
-Duplicating produces a **new `draft` load** that copies only the **set of categories** present on the source — both template and custom ones (i.e. the `LoadItemCategory.category` values). Everything else resets:
-- new `id`, new `created_at`
+Duplicate is **not an endpoint** — the client creates a **new `draft` load locally** (new `id`), pre-seeds `LoadItemCategory` rows for the **source's category set** (template + custom), and lets replication carry it to the server. Everything else resets:
 - `name` set to the **new load's current date** (not copied); `shop_name`, `shop_location`, `send_date` cleared
 - all `count_sent` / `count_received` = 0, `count_mode` back to `auto`
 - **no photos, no `LoadItem`s, no links copied**
 
-This carry-over of custom categories is the **only** reuse path for them (they are otherwise one-load-only, §4.3).
+This carry-over of custom categories is the **only** reuse path for them (they are otherwise one-load-only, §4.3). Because it's pure local document creation, duplicate works fully offline like every other action.
 
-Because a duplicate is just a normal `draft` load, duplication can be performed **entirely client-side offline** (create a new local load pre-seeded with the source's categories); the `/duplicate` endpoint exists mainly for the online path and cross-device parity.
+### 5.4 Send & reconcile logic (PRD §4.6–4.7) — client-side, server-validated
 
-### 5.4 Reconcile logic (PRD §4.7)
+Send, receive, and reconcile are **local writes**; the server only **validates them at push time** (§5.1). The rules:
 
-`POST /receive` — the total-received entry is **skippable** (PRD §3.1(10)):
-- **Enter total** and `total_received == total_sent` → status `closed`, response `{result: "match"}`.
-- **Enter total** and `total_received != total_sent` → status stays `sent`, response `{result: "mismatch", delta}`; client immediately opens the category check-off UI.
-- **Skip** (`{skip: true}`, `total_received` stays null) → response `{result: "check"}`; client goes **straight to the per-category check** — same UI as the mismatch path.
+- **Send** — client sets `status = sent` and **freezes `total_sent`** = Σ `count_sent`. On push, the load's validator rejects (as a conflict) any later change to a `sent`/`closed` load's `count_sent`/`total_sent`, keeping the **sent manifest read-only**.
+- **Receive — the total is skippable** (PRD §3.1(10)), decided **on the client** (it already has both numbers):
+  - enter total, `total_received == total_sent` → set `status = closed` (**match**);
+  - enter total, `total_received != total_sent` → open the per-category check (**mismatch**);
+  - **skip** (`total_received` stays null) → go straight to the same per-category check.
+- **Reconcile** — the per-category check writes only `count_received` (sent tally stays read-only), then sets `status = closed`. A reopened `sent`/`closed` load exposes an **add/minus receive-side counter per category** for double-checking pieces (PRD §3.1(11)); it edits `count_received` only.
+- **Received-more-than-sent (PRD §7.4)** — `count_received > count_sent` is allowed (positive delta), labelled surplus not shortfall. No blocking validation — the tool records reality.
 
-Check-off submitted via `/reconcile` with per-category `count_received`; server stores the values and sets status `closed`. **The sent tally stays read-only** throughout — reconcile only writes `count_received`, never `count_sent`. A reopened `sent`/`closed` load exposes an **add/minus receive-side counter per category** for physically double-checking pieces as they come back (PRD §3.1(11)), which just edits `count_received`.
-
-**Received-more-than-sent (PRD open question §7.4)** is handled by allowing `count_received > count_sent` per category and a positive `delta`; the UI labels it as a surplus rather than a shortfall. No blocking validation either way — the tool records reality, it doesn't police it.
+Because these are local writes, the whole send→receive→reconcile flow runs offline; the server sees the resulting documents on the next sync and enforces the read-only-manifest invariant.
 
 ### 5.5 Identity & authentication (Zitadel)
 
@@ -399,9 +419,8 @@ Sources: [ACA — transport protocols](https://learn.microsoft.com/azure/contain
 
 - **Vite + React + TypeScript**.
 - **PWA**: `vite-plugin-pwa` (Workbox) for the service worker + web app manifest → installable, offline app shell.
-- **Local store**: IndexedDB via a thin wrapper (e.g. `idb`/Dexie) — the offline system of record.
-- **Server state / sync**: a query layer (e.g. TanStack Query) that reads/writes IndexedDB first and reconciles with `/sync` in the background.
-- **Auth**: an OIDC/PKCE client library that redirects to Zitadel Login V2 and manages token storage/refresh (§5.5).
+- **Local store + sync**: **RxDB** (IndexedDB storage) is the offline system of record. Each entity is an RxDB **collection** (§4.1); the UI reads/writes RxDB reactively and **RxDB replication** (`replicateRxCollection`, one per collection) syncs to `/sync/{collection}` in the background (§7). No hand-rolled outbox/query layer.
+- **Auth**: an OIDC/PKCE client library that redirects to Zitadel Login V2 and manages token storage/refresh (§5.5); the bearer token is attached to the replication pull/push requests.
 - **Routing**: React Router.
 - **Styling**: mobile-first; large tap targets for the counter (see §6.3).
 
@@ -428,32 +447,35 @@ PRD success metric is **< 60s to itemize**. Design implications:
 
 ### 6.4 Offline behavior
 
-- Service worker precaches the app shell + category catalog → app opens with no network.
-- All mutations (create, itemize, send, receive, reconcile, duplicate) write to IndexedDB synchronously and enqueue a sync op.
-- Photos captured offline are stored as blobs in IndexedDB with `local_only = true`; the `Photo`, its `PhotoLink`, and the auto-created `LoadItem` are created locally and uploaded/synced on reconnect.
-- A subtle sync indicator shows pending/failed sync; it never blocks the core flow.
+- Service worker precaches the app shell + category template → app opens with no network.
+- All actions (create, itemize, send, receive, reconcile, duplicate) are **RxDB writes**; the UI updates reactively from RxDB and RxDB replication carries the changes when connectivity returns — the app never awaits the network.
+- Photos captured offline: the `Photo`, its `PhotoLink`, and the auto-created `LoadItem` are written to RxDB immediately; the image **bytes** are stashed locally with the client-only `local_only` flag and uploaded via `/media/upload-url` on reconnect (then `blob_key` is set, which syncs).
+- A subtle sync indicator reflects RxDB replication state (active/pending/error); it never blocks the core flow.
 - **Auth is online-only by nature** (sign-in requires reaching Zitadel), but once tokens are stored the core counter flow runs fully offline; tokens refresh on reconnect.
 
 ---
 
-## 7. Offline sync strategy
+## 7. Offline sync strategy (RxDB replication)
 
-**Model:** offline-first with a queue and last-writer-wins per record, made safe by client-generated ids.
+**Model:** local-first with **RxDB replication** against the generic `/sync/{collection}` contract (§5.2). RxDB owns the hard client-side machinery (local store, change queue, retries, checkpoints, conflict handling); we implement the server pull/push handlers. One `replicateRxCollection` runs per collection.
 
-1. **Client-generated UUIDs** for Load / LoadItemCategory / LoadItem / Photo / PhotoLink eliminate create-time id collisions — every offline create (including auto-created items and photo links) is a first-class record, not a temp placeholder.
-2. **Mutation queue**: each local change appends an op `{entity, id, op, payload, updated_at}` to an outbox in IndexedDB.
-3. **Push**: `POST /sync` sends the outbox; server applies ops idempotently (upsert by id).
-4. **Pull**: same call returns server changes since the client's `cursor` (a monotonic version/timestamp). Client merges.
-5. **Conflict resolution**: **last-writer-wins by `updated_at`** at the record level. This is acceptable for MVP because Phase 1 is **single-user** (PRD §5 out-of-scope: multi-user), so real conflicts are limited to the same user on two devices — rare, and LWW is a reasonable loss function. Sent/closed status transitions are monotonic and never regressed by an older update.
-6. **Photos**: uploaded out-of-band to Blob via pre-signed URLs; the `/sync` payload only carries photo metadata + `blob_key`, never bytes.
+1. **Client-generated UUIDs** for every synced collection eliminate create-time id collisions — an offline create (including auto-created items and photo links) is a first-class record, not a temp placeholder.
+2. **Checkpoint** = `{ id, updated_at }`. Pull returns docs written strictly after the checkpoint, ordered by `(updated_at ASC, id ASC)` — `id` is the tiebreaker when timestamps collide.
+3. **Server-authored `updated_at`** — the server sets `updated_at` (epoch ms) on **every** write (DB `now()`/trigger); the client's value is never trusted for ordering. This is what makes checkpoint iteration correct.
+4. **Soft-delete / tombstones** — deletes set `deleted_at`, surfaced on the wire as `_deleted = true` (RxDB `deletedField`), so deletions replicate instead of vanishing. Nothing is hard-deleted.
+5. **Push & conflicts** — push sends `{ new_document_state, assumed_master_state }` rows; the server returns **conflicts only** (the current master doc) when its stored state differs from `assumed_master_state`. RxDB resolves conflicts on the client; for a **single-user** MVP (PRD §5: multi-user out of scope) the default **server-wins / last-write** handler is sufficient — real conflicts are limited to the same user on two devices.
+6. **Invariants at push-time** — business rules (freeze `total_sent` at send, read-only sent manifest, user ownership) are enforced by the per-collection validator; a rejected write is returned **as a conflict**, reverting the illegal local change on the next merge.
+7. **Photos** — bytes go out-of-band to Blob via pre-signed URLs (§8); only the `photos`/`photo_links` **documents** replicate through `/sync`, never image bytes.
+8. **Liveness** — MVP uses **pull-on-reconnect + interval polling**; the RxDB live **pull-stream (SSE)** is **deferred to Phase 3** and can be added without changing the pull/push contract.
+9. **Two schemas stay in step** — the client RxDB `jsonSchema` (with its own versioned migration strategies) and the Postgres/Alembic schema both derive from §4.1 and must be kept in agreement.
 
 ---
 
 ## 8. Photo storage
 
 - Bytes live in **Azure Blob Storage**; the DB stores only the `Photo` (`blob_key` + metadata) and its `PhotoLink`(s) — never image bytes.
-- Upload path: client asks API for a **pre-signed (SAS) upload URL** → PUTs bytes directly to Blob → confirms to API. Keeps large payloads off the API container. A category photo also yields an auto-created `LoadItem` + `PhotoLink` (§4.4).
-- Read path: API returns short-lived read SAS URLs (or proxies) so blobs aren't public.
+- Upload path: client creates the `Photo`/`PhotoLink`/`LoadItem` **documents** in RxDB (they sync), calls **`POST /media/upload-url`** for a pre-signed URL, PUTs bytes directly to Blob, then sets the `photos` doc's `blob_key` (which syncs). Keeps large payloads off the API container. A category photo also yields the auto-created `LoadItem` + `PhotoLink` (§4.4).
+- Read path: **`GET /media/{photo_id}`** returns a short-lived read SAS URL (user-scoped) so blobs aren't public.
 - Images are compressed client-side (target WebP) before upload to respect mobile data.
 - **Local dev** uses **Azurite** (Blob emulator) wired by Aspire, so no cloud account is needed to develop the photo flow.
 
@@ -473,13 +495,13 @@ PRD success metric is **< 60s to itemize**. Design implications:
 ## 10. Testing strategy
 
 ### 10.1 Backend unit/integration (`clothesline_tests`, pytest)
-- **Unit**: domain services (reconcile match/mismatch/surplus, duplicate semantics, send-freezes-manifest, **count-mode auto→manual transitions incl. photo-add increment / delete decrement / manual stickiness — §4.4**, sync merge/LWW) tested without HTTP.
-- **Integration**: FastAPI `TestClient` against a **throwaway Postgres built from the `clothesline_db` migration project** (exercising the real Alembic path), covering the loads lifecycle, `/sync` idempotency, and the user upsert. Auth is stubbed with a **lightweight OIDC mock** (e.g. `mock-oauth2-server`) that issues test JWTs the API validates against the mock's JWKS — no real Zitadel needed for fast tests.
+- **Unit**: per-collection **push-time validators** (send-freezes-manifest / read-only sent manifest, user ownership, surplus allowed) and helpers, tested without HTTP.
+- **Integration**: FastAPI `TestClient` against a **throwaway Postgres built from the `clothesline_db` migration project** (exercising the real Alembic path), covering the **`/sync/{collection}` contract**: pull ordering by `(updated_at, id)` + checkpoint iteration, push **idempotency** (replay → no drift), **conflict** responses (stale `assumed_master_state` → current master returned), server-authored `updated_at`, tombstone (`_deleted`) replication, and the user upsert via `/auth/me`. Auth is stubbed with a **lightweight OIDC mock** (e.g. `mock-oauth2-server`) issuing test JWTs the API validates against the mock's JWKS — no real Zitadel needed for fast tests.
 - Run via `uv run pytest`.
 
 ### 10.2 Frontend unit (Vitest, inside `clothesline-web`)
-- Component tests for the tap-counter increment/decrement + running total, load-list rendering, and the mismatch → check-off branch.
-- IndexedDB wrapper and outbox/sync-merge logic tested against a fake IndexedDB.
+- Component tests for the tap-counter increment/decrement + running total, load-list rendering, and the mismatch/skip → check branch.
+- **Local-domain logic on RxDB** (against an in-memory/fake RxDB storage): send freezes `total_sent`, receive match/mismatch/skip routing, duplicate creates a date-named draft with the source's categories only, and **count-mode auto→manual** transitions (photo-add increment / delete decrement / manual stickiness — §4.4).
 
 ### 10.3 E2E (`clothesline-e2e`, Playwright)
 - Full flows against the running Aspire graph, which includes the **real Zitadel core + Login V2** containers:
@@ -537,15 +559,15 @@ If two environments prove more cost than the MVP justifies, Zitadel core + Login
 | PRD § | Feature | Where implemented |
 |---|---|---|
 | 4.1 | Passwordless email auth | **Zitadel** (Login V2, email-OTP, JIT user); API validates JWTs via JWKS; Mailpit locally (§5.5–5.6) |
-| 4.2 | Create a load | `loads/`; `POST /loads`; create/edit screen — `name` defaults to date, optional shop fields (§4.1, §6.2) |
-| 4.3 | Itemize + custom categories | pre-seeded template + custom free-text `LoadItemCategory`; auto/manual `count_mode` (§4.3, §4.4); tap-counter screen (§6.3) |
-| 4.4 | Duplicate load | `/duplicate` + client-side duplicate; carries categories, resets name to date (§5.3) |
-| 4.5 | Photos (optional) | `Photo` + `PhotoLink` junction; auto-created `LoadItem` + gallery; Blob + Azurite; pre-signed upload (§4.1, §8) |
-| 4.6 | Send | `/loads/{id}/send` freezes `total_sent`, sent manifest read-only (§4.2) |
-| 4.7 | Receive & reconcile | `/receive` (enter **or skip**) + `/reconcile`; match/mismatch/skip; receive-side counter (§5.4) |
-| 4.8 | Home reconcile (optional) | `/reconcile` on closed load; `reconciled` flag |
-| 4.9 | Offline-first | PWA service worker + IndexedDB + `/sync` (§6.4, §7) |
-| 4.10 | Shop record-keeping | optional `shop_name`/`shop_location` on `Load`; capture only |
+| 4.2 | Create a load | local `loads` doc (`name` defaults to date, optional shop fields) + pre-seeded categories; syncs via `/sync/loads` (§4.1, §5.3, §6.2) |
+| 4.3 | Itemize + custom categories | pre-seeded template + custom free-text `load_item_categories`; auto/manual `count_mode` (§4.3, §4.4); tap-counter screen (§6.3) |
+| 4.4 | Duplicate load | local-only new date-named draft carrying the category set (§5.3) |
+| 4.5 | Photos (optional) | `photos` + `photo_links` docs + auto-created `load_items` + gallery; bytes via `/media` to Blob/Azurite (§4.1, §5.2, §8) |
+| 4.6 | Send | local `status=sent`, freezes `total_sent`; read-only-manifest enforced at push-time (§5.4) |
+| 4.7 | Receive & reconcile | local receive (enter **or skip**) + per-category `count_received`; match/mismatch/skip; receive-side counter (§5.4) |
+| 4.8 | Home reconcile (optional) | receive-side counter on closed load; `reconciled` flag (§5.4) |
+| 4.9 | Offline-first | PWA service worker + **RxDB** + `/sync/{collection}` replication (§6.4, §7) |
+| 4.10 | Shop record-keeping | optional `shop_name`/`shop_location` on `loads`; capture only |
 
 ---
 

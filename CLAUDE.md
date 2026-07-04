@@ -27,6 +27,7 @@ The repo ships a **dev container** (`.devcontainer/`). Do development inside it 
 | Backend data | PostgreSQL; shared **`clothesline_db`** package (ORM models + Alembic migrations) |
 | Identity / auth | Self-hosted **Zitadel** (OIDC), passwordless email OTP via **Login V2**; API validates JWTs against Zitadel's JWKS |
 | Frontend | **Vite** + **React** (TypeScript), PWA (offline-first) |
+| Offline store / sync | **RxDB** (IndexedDB storage) as the local system of record; **RxDB replication** to the API's generic `/sync/{collection}` endpoint |
 | Photo storage | Azure Blob Storage (Azurite locally) |
 | Backend tests | pytest |
 | Frontend unit tests | Vitest |
@@ -61,7 +62,7 @@ Backend is a modular monolith (one deployable, split internally by domain: `auth
 ## Conventions
 
 - **Dependencies:** backend uses `uv` (`uv add`, `uv run`) with `pyproject.toml` — do not use bare `pip`. Frontend uses the Vite/npm toolchain.
-- **Offline-first is a hard requirement:** create-load, itemize, mark-sent, and enter-received-count must work with no network. The client (IndexedDB) is the system of record during a session and syncs to the API when online. Don't add a server round-trip to the core counter flow.
+- **Offline-first is a hard requirement:** create-load, itemize, mark-sent, and enter-received-count must work with no network. The client (**RxDB over IndexedDB**) is the system of record during a session; **RxDB replication** syncs to the API's generic `/sync/{collection}` endpoint when online. Loads/items have **no REST CRUD** — send/receive/reconcile/duplicate are local RxDB writes, validated server-side at push time. Don't add a server round-trip to the core counter flow.
 - **Playwright:** Chromium is pre-installed at `/opt/pw-browsers/chromium`. Do **not** run `playwright install`.
 - **IDs are client-generated UUIDs** for Load/LoadItem/Photo so offline creates survive sync.
 - **Identity is Zitadel's job, not ours.** Don't build password flows, token issuance, or OTP storage — the API only validates Zitadel-issued JWTs (JWKS). Self-hosting Zitadel on ACA has specific requirements (Login V2 as its own container + path routing, `http2` ingress, external-TLS mode) — see spec §5.6 before touching deploy.
