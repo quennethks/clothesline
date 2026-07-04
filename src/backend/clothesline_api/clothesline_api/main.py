@@ -1,7 +1,7 @@
+from clothesline_db.session import async_session_factory, create_db_engine
 from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import create_async_engine
 
 from clothesline_api.config import settings
 
@@ -15,7 +15,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-engine = create_async_engine(settings.database_url, pool_pre_ping=True)
+engine = create_db_engine(settings.database_url)
+app.state.session_factory = async_session_factory(engine)
 
 
 @app.get("/health")

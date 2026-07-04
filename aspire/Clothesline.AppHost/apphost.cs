@@ -5,6 +5,9 @@
 #:package CommunityToolkit.Aspire.Hosting.Mailpit@13.4.0
 #:sdk Aspire.AppHost.Sdk@13.4.6
 
+using Aspire.Hosting;
+using Aspire.Hosting.ApplicationModel;
+
 var builder = DistributedApplication.CreateBuilder(args);
 
 // --- secrets / parameters ---
@@ -94,6 +97,21 @@ var loginV2 = builder.AddContainer("login-v2", "ghcr.io/zitadel/zitadel-login", 
     .WithVolume("zitadel-machinekeys", "/machinekey")
     .WaitFor(zitadel);
 
+// --- database migrations ---
+// One-shot `alembic upgrade head` (spec §2.1's `mig` node) — gated on
+// Postgres, and the API in turn waits for this to finish before it starts, so
+// the schema always exists first. Working directory is the clothesline_db
+// package itself (not the workspace root) because alembic.ini's
+// `script_location = clothesline_db/migrations` is resolved relative to the
+// process's CWD, not the ini file's own location (verified empirically) —
+// `uv run` still auto-discovers the shared workspace .venv from this
+// subdirectory.
+var migrate = builder.AddExecutable(
+        "clothesline-db-migrate", "uv", "../../src/backend/clothesline_db",
+        "run", "alembic", "-c", "alembic.ini", "upgrade", "head")
+    .WithEnvironment("ConnectionStrings__clothesline_db", appDb.Resource.ConnectionStringExpression)
+    .WaitFor(appDb);
+
 // --- app services ---
 // appDirectory is the uv *workspace root* (src/backend), not the
 // clothesline_api subpackage — `uv sync` for a workspace member creates the
@@ -101,6 +119,7 @@ var loginV2 = builder.AddContainer("login-v2", "ghcr.io/zitadel/zitadel-login", 
 // actually ends up.
 var api = builder.AddUvicornApp("clothesline-api", "../../src/backend", "clothesline_api.main:app")
     .WithUv()
+    .WaitForCompletion(migrate)
     // isProxied: false — non-container (executable) resources can't be
     // proxied when Port == TargetPort; we want a fixed, predictable port so
     // isProxied is disabled instead of letting Port/TargetPort diverge.
