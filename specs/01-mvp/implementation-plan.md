@@ -18,7 +18,7 @@ Sequencing principles:
 - **Offline is not a "phase at the end"** — the client is built local-first from M3 onward; the sync endpoint lands as soon as there's state to sync.
 - **Tests ride with the code** — pytest/Vitest per milestone; Playwright e2e (incl. the offline flow) gates the milestones that complete a user journey.
 
-Effort tags are **T-shirt sizes** (S/M/L), not calendar estimates — this is a solo pre-launch build (PRD §5).
+Effort tags are **T-shirt sizes** (S/M/L), not calendar estimates — this is a solo pre-launch build (PRD §6).
 
 ---
 
@@ -99,27 +99,26 @@ Persistence for the domain, in the shared data package (spec §3, §4, §5.1).
 ---
 
 ### M3 — Load lifecycle, online  ·  size **L**
-The core user journey end-to-end, network-connected (spec §3.2–3.8, §5.2, §5.4).
+The core user journey end-to-end, network-connected (PRD §4.2–4.8; spec §5.2, §5.4).
 
 Backend:
-- [ ] `POST /loads`, `GET /loads`, `GET /loads/{id}`, `PATCH /loads/{id}` (draft edits).
-- [ ] `POST /loads/{id}/send` — freezes `total_sent`, `draft → sent` (spec §4.2).
-- [ ] `POST /loads/{id}/receive` — match → `closed`; mismatch → returns delta (spec §5.4), incl. **surplus** (received > sent, PRD O4).
-- [ ] `POST /loads/{id}/reconcile` — per-category check-off; closes load.
+- [ ] `POST /loads` — creates the load with `name` defaulting to today's date, optional shop fields, and **pre-seeded template `LoadItemCategory` rows** (spec §4.3); `GET /loads`, `GET /loads/{id}`, `PATCH /loads/{id}` (draft edits, incl. add/remove categories).
+- [ ] `POST /loads/{id}/send` — freezes `total_sent`, `draft → sent`, sent manifest read-only (spec §4.2).
+- [ ] `POST /loads/{id}/receive` — **enter or skip**: match → `closed`; mismatch or **skip** → per-category check (spec §5.4), incl. **surplus** (received > sent, PRD §7.4).
+- [ ] `POST /loads/{id}/reconcile` — per-category `count_received` check-off (sent tally read-only); closes load.
 - [ ] All queries scoped to `user_id` (use a stub user until M5).
-
 - [ ] `LoadItemCategory` count in **manual mode** via tap/number entry; first manual interaction flips `count_mode = manual` permanently (spec §4.4). (Auto/photo-driven mode lands in M6.)
 
 Frontend:
-- [ ] Home / load list; create-load screen; **tap-counter** grid (spec §6.2).
-- [ ] Load detail + "Mark sent"; receive screen (single number) → match celebration / mismatch check-off.
-- [ ] Category check-off screen (shared by mismatch + optional home reconcile).
+- [ ] Home / load list; create-load screen (**H1 load name → optional shop fields → category list**); **add custom category** free-text + remove-category; **tap-counter** grid (spec §6.2).
+- [ ] Load detail + "Mark sent"; receive screen (number **or Skip**) → match celebration / mismatch|skip check.
+- [ ] Category check-off screen with **receive-side add/minus counter** (shared by mismatch, skip, and optional home double-check on sent/closed loads).
 
 Tests:
-- [ ] pytest for the reconcile/send/duplicate service logic (match, mismatch, surplus, freeze-on-send) and manual `count_mode` takeover.
-- [ ] Vitest for tap-counter increment/decrement + running total, and the mismatch → check-off branch.
+- [ ] pytest for the reconcile/send/duplicate service logic (match, mismatch, **skip→check**, surplus, freeze-on-send, name-resets-on-duplicate) and manual `count_mode` takeover.
+- [ ] Vitest for tap-counter increment/decrement + running total, custom-category add/remove, and the mismatch/skip → check branch.
 
-**Acceptance:** online, a user can create → itemize → send → receive a matched load (closes) and a mismatched load (check-off → closes); Playwright smoke covers both.
+**Acceptance:** online, a user can create (date-named, pre-seeded categories, add a custom one) → itemize → send → receive a matched load (closes), a mismatched load (check → closes), and a skipped-total load (check → closes); Playwright smoke covers them.
 
 ---
 
@@ -141,7 +140,7 @@ Tests:
 ---
 
 ### M5 — Integrate Zitadel (passwordless)  ·  size **M**
-Replace the stub user with real sign-in delegated to Zitadel (spec §3.1 PRD, §5.5–5.6). No auth UI or token issuance is built by us.
+Replace the stub user with real sign-in delegated to Zitadel (PRD §4.1; spec §5.5–5.6). No auth UI or token issuance is built by us.
 
 - [ ] Configure the Zitadel instance: a passwordless project with **email-OTP as the primary factor** and **JIT user creation** (no signup); Login V2 enabled (`LOGINV2_REQUIRED`).
 - [ ] Frontend: **OIDC Authorization Code + PKCE** client that redirects to **Login V2** for the email-code exchange, handles the callback, and persists tokens to survive offline (spec §9 tradeoff).
@@ -157,7 +156,7 @@ Tests:
 ---
 
 ### M6 — Photos, per-item groundwork & gallery  ·  size **M**
-Optional evidence capture + the `Photo`/`PhotoLink`/`LoadItem` groundwork (spec §3.5 PRD, §4.1, §4.4, §8).
+Optional evidence capture + the `Photo`/`PhotoLink`/`LoadItem` groundwork (PRD §4.5; spec §4.1, §4.4, §8).
 
 - [ ] `POST /loads/{id}/photos` (`{entity_type, entity_id}`) → creates `Photo` + `PhotoLink`, returns pre-signed Blob **upload** URL; `GET /loads/{id}/photos` gallery list; `GET …/{pid}` read SAS; `DELETE …/{pid}` soft-deletes photo + links.
 - [ ] Category photo **auto-creates a `LoadItem`** (name = category) and links it; **auto-mode count** increments on add / decrements on delete (floor 0), never once the category is manual (spec §4.4).
@@ -170,9 +169,9 @@ Optional evidence capture + the `Photo`/`PhotoLink`/`LoadItem` groundwork (spec 
 ---
 
 ### M7 — Duplicate & polish  ·  size **S–M**
-The "template" mechanic + hitting the usability targets (spec §3.4/§5.3, §6.3).
+The "template" mechanic + hitting the usability targets (PRD §4.4; spec §5.3, §6.3).
 
-- [ ] Duplicate action (home list ⋮ + open load): new `draft` carrying **categories only**; counts/photos/shop/location/date reset (spec §5.3). Works offline client-side; `/duplicate` endpoint for the online/cross-device path.
+- [ ] Duplicate action (home list ⋮ + open load): new `draft` carrying **categories only** (template + custom); `name` reset to the new date, counts/photos/shop/location/`count_mode` reset (spec §5.3). Works offline client-side; `/duplicate` endpoint for the online/cross-device path.
 - [ ] Counter UX pass: large thumb-reachable tiles, single-tap increment with feedback, always-visible running total (PRD < 60s target).
 - [ ] Empty states, error/toast states, sync-status affordance, install prompt.
 
@@ -241,4 +240,4 @@ The MVP is done when:
 3. Duplicate, photos (bundle + per-category), and optional home reconcile all function.
 4. The full Playwright suite (including the offline path) is green in CI.
 5. `azd up` deploys the two ACA environments (identity + application) and the deployed app passes a phone smoke test.
-6. The PRD usability targets (spec §13 / PRD §5) are met on a real device: itemize < 60s, matched reconcile < 30s, mismatched reconcile < 90s.
+6. The PRD usability targets (spec §13 / PRD §6) are met on a real device: itemize < 60s, matched reconcile < 30s, mismatched reconcile < 90s.

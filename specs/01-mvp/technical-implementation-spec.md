@@ -177,36 +177,37 @@ The same logical model exists on the client (IndexedDB) and server (Postgres). T
 | email | text | from token claims; the only PII in the app DB |
 | created_at | timestamptz | |
 
-**Load** — the core record (PRD §3.2, §3.6, §3.7)
+**Load** — the core record (PRD §4.2, §4.6, §4.7)
 | field | type | notes |
 |---|---|---|
 | id | uuid | pk, **client-generated** (uuid v4) so offline creates are stable across sync |
 | user_id | uuid | fk → User.id |
-| shop_name | text | |
-| shop_location | text | free text in MVP |
+| name | text | the load's title; **defaults to today's date**, user-editable (PRD §3.1). On Duplicate it resets to the new load's current date |
+| shop_name | text? | **optional** (recommended); free text |
+| shop_location | text? | **optional** (recommended); free text |
 | send_date | date | |
-| status | enum | `draft` \| `sent` \| `closed` |
+| status | enum | `draft` \| `sent` \| `closed` (the `draft` state is surfaced in the UI as "Draft / Counting") |
 | total_sent | int | denormalized sum of category `count_sent`, frozen at "send" |
-| total_received | int? | entered at counter |
+| total_received | int? | entered at counter; **null when the user skipped the total** (§5.4) |
 | reconciled | bool | true once category check-off completed (optional) |
 | created_at / updated_at | timestamptz | `updated_at` drives sync conflict resolution |
 | deleted_at | timestamptz? | soft delete for sync |
 
 > The load's thumbnail is no longer a dedicated column — it's the `is_primary` photo linked to the load (see `PhotoLink` below).
 
-**LoadItemCategory** — one row per clothing category present on a load (PRD §3.3). This is the tap-counter row (Shirts, Trousers, …); *renamed from the earlier `LoadItem`*.
+**LoadItemCategory** — one row per clothing category present on a load (PRD §4.3). This is the tap-counter row (Shirts, Trousers, …); *renamed from the earlier `LoadItem`*.
 | field | type | notes |
 |---|---|---|
 | id | uuid | pk, client-generated |
 | load_id | uuid | fk → Load.id |
-| category | text | from the category catalog (§4.3) |
+| category | text | free text — either a **default template** category or a **user-added custom** one (§4.3) |
 | count_sent | int | the count at send; driven by tap or by photos (see §4.4) |
 | count_received | int? | received count for this category; **may be filled anytime** (drill-down detail), not only on a mismatch |
 | count_mode | enum | `auto` \| `manual` (default `auto`) — how `count_sent` is driven; see §4.4 |
 | created_at / updated_at | timestamptz | |
 | deleted_at | timestamptz? | soft delete for sync |
 
-**LoadItem** — an individual, specific item within a category (PRD §3.3 groundwork). Auto-created when a photo is captured; primarily just a name.
+**LoadItem** — an individual, specific item within a category (PRD §4.3 groundwork). Auto-created when a photo is captured; primarily just a name.
 | field | type | notes |
 |---|---|---|
 | id | uuid | pk, client-generated |
@@ -215,7 +216,7 @@ The same logical model exists on the client (IndexedDB) and server (Postgres). T
 | created_at / updated_at | timestamptz | |
 | deleted_at | timestamptz? | soft delete for sync |
 
-**Photo** — a standalone image record; attachment to an entity is expressed via `PhotoLink` (PRD §3.5)
+**Photo** — a standalone image record; attachment to an entity is expressed via `PhotoLink` (PRD §4.5)
 | field | type | notes |
 |---|---|---|
 | id | uuid | pk, client-generated |
@@ -244,28 +245,31 @@ The same logical model exists on the client (IndexedDB) and server (Postgres). T
 
 ```mermaid
 stateDiagram-v2
-    [*] --> draft: create
-    draft --> sent: mark sent (freezes total_sent)
-    sent --> closed: received == sent (match, close immediately)
-    sent --> checkoff: received != sent (mismatch)
-    checkoff --> closed: item-by-item check-off
-    closed --> closed: optional home reconcile (sets reconciled)
+    [*] --> draft: create (Draft / Counting)
+    draft --> sent: mark sent (freezes total_sent, manifest read-only)
+    sent --> closed: enter total == sent (match, close immediately)
+    sent --> checkoff: enter total != sent (mismatch)
+    sent --> checkoff: skip total
+    checkoff --> closed: per-category check
+    closed --> closed: reopen — read-only sent totals + receive-side counter
     closed --> [*]
 ```
-- `total_sent` is frozen when the load transitions `draft → sent` (PRD §3.6: manifest becomes the source of truth).
-- Optional home reconcile (PRD §3.8) can set `reconciled = true` on an already-`closed` load without changing status.
-- **Open question O2 in PRD** (is `draft` needed?) is resolved here in favor of an explicit `draft` state — it makes offline create/edit and "duplicate" natural, and costs nothing.
+- The `draft` state is surfaced in the UI as **"Draft / Counting"** — categories and counts are fully editable, photos addable.
+- `total_sent` is frozen when the load transitions `draft → sent` (PRD §4.6: manifest becomes the source of truth). A `sent`/`closed` load's **sent tally is read-only** thereafter; only the receive side (`count_received`) is writable (§5.4).
+- Optional home reconcile (PRD §4.8) can set `reconciled = true` on an already-`closed` load without changing status.
+- **Open question O2 in PRD** (now §7.2 — draft/counting lifecycle) is resolved for state modelling: an explicit `draft` state exists; abandoned-draft cleanup (auto-save vs. discard vs. archive) is left unresolved for Phase 1.
 
-### 4.3 Category catalog
+### 4.3 Category template & custom categories
 
-MVP ships a **fixed default category list** (PRD open question O1), bundled with the client so it works fully offline:
+A new load opens **pre-seeded** with a default template of common categories (PRD §3.1, §4.3), bundled with the client so it works fully offline:
 
 ```
 Shirts, Trousers, Shorts, Underwear, Socks, Towels, Bedsheets, Jackets, Dresses, Other
 ```
 
-- Stored as a static config on the client; the server keeps the same list for validation.
-- **Custom categories are out of scope for Phase 1** (deferring O1's second half). Revisit if user testing shows the fixed list is a blocker.
+- On load creation the client **creates `LoadItemCategory` rows** for the template set (`count_sent = 0`, `count_mode = auto`). The user can **remove** any (soft-delete the row) or **add** their own.
+- **Custom categories** are added via a **free-text field** (PRD §3.1(4)); they are just `LoadItemCategory` rows with a user-typed `category` string. Server-side validation accepts arbitrary category strings (the template is a convenience default, not a closed allow-list).
+- **Custom categories are one-load-only** (PRD open question §7.1): they live on the load they were added to and are **not** saved to a global list. The **reuse path is Duplicate** — duplicating a load carries its categories (template + custom) forward. A saved/personal category list is deferred to a later phase.
 
 ### 4.4 Count modes (auto / manual)
 
@@ -309,20 +313,20 @@ All endpoints require a valid **Zitadel-issued access token** (bearer JWT), vali
 |---|---|---|
 | GET | `/auth/me` | current user from the validated token; upserts the minimal `User {id, sub, email}` row on first call. |
 
-**Loads (PRD §3.2–3.8)**
+**Loads (PRD §4.2–4.8)**
 | method | path | purpose |
 |---|---|---|
 | GET | `/loads` | list current user's loads (home screen). |
-| POST | `/loads` | create a load (accepts client-generated id, categories, counts). |
-| GET | `/loads/{id}` | full load with items + photos. |
-| PATCH | `/loads/{id}` | edit header / item counts while `draft`. |
+| POST | `/loads` | create a load (accepts client-generated id, `name` defaulting to today's date, optional shop fields, and the pre-seeded template categories). |
+| GET | `/loads/{id}` | full load with categories, items + photos. |
+| PATCH | `/loads/{id}` | edit header (name, optional shop fields) / category counts / add-remove categories while `draft`. |
 | POST | `/loads/{id}/send` | freeze manifest, `draft → sent`. |
-| POST | `/loads/{id}/receive` | body `{total_received}` → returns `match` or `mismatch`; on match sets `closed`. |
-| POST | `/loads/{id}/reconcile` | submit per-category `count_received` check-off; closes load (mismatch path) or records optional home reconcile. |
+| POST | `/loads/{id}/receive` | body `{total_received}` (number) or `{skip: true}`. Entered → `match` (sets `closed`) or `mismatch`; **skip → routes to the per-category check** (§5.4). |
+| POST | `/loads/{id}/reconcile` | submit per-category `count_received` check-off; closes load (mismatch/skip path) or records optional home reconcile. |
 | POST | `/loads/{id}/duplicate` | server-side duplicate (carries categories only; see §5.3). |
 | DELETE | `/loads/{id}` | soft delete. |
 
-**Media (PRD §3.5)**
+**Media (PRD §4.5)**
 | method | path | purpose |
 |---|---|---|
 | POST | `/loads/{id}/photos` | register a photo for an entity (`{entity_type, entity_id}`), returns a **pre-signed Blob upload URL**; creates the `Photo` + `PhotoLink`. For a category photo it **auto-creates a `LoadItem`** (name = category) and links to it (§4.4). |
@@ -335,33 +339,38 @@ All endpoints require a valid **Zitadel-issued access token** (bearer JWT), vali
 |---|---|---|
 | POST | `/sync` | batch: client pushes local mutations since `cursor` and pulls server changes since `cursor`. Returns new cursor. |
 
-### 5.3 Duplicate semantics (PRD §3.4)
+### 5.3 Duplicate semantics (PRD §4.4)
 
-Duplicating produces a **new `draft` load** that copies only the **set of categories** present on the source (i.e. the `LoadItemCategory.category` values). Everything else resets:
+Duplicating produces a **new `draft` load** that copies only the **set of categories** present on the source — both template and custom ones (i.e. the `LoadItemCategory.category` values). Everything else resets:
 - new `id`, new `created_at`
-- `shop_name`, `shop_location`, `send_date` cleared
+- `name` set to the **new load's current date** (not copied); `shop_name`, `shop_location`, `send_date` cleared
 - all `count_sent` / `count_received` = 0, `count_mode` back to `auto`
 - **no photos, no `LoadItem`s, no links copied**
 
+This carry-over of custom categories is the **only** reuse path for them (they are otherwise one-load-only, §4.3).
+
 Because a duplicate is just a normal `draft` load, duplication can be performed **entirely client-side offline** (create a new local load pre-seeded with the source's categories); the `/duplicate` endpoint exists mainly for the online path and cross-device parity.
 
-### 5.4 Reconcile logic (PRD §3.7)
+### 5.4 Reconcile logic (PRD §4.7)
 
-`POST /receive` with `total_received`:
-- `total_received == total_sent` → status `closed`, response `{result: "match"}`.
-- `total_received != total_sent` → status stays `sent`, response `{result: "mismatch", delta}`; client immediately opens the category check-off UI.
+`POST /receive` — the total-received entry is **skippable** (PRD §3.1(10)):
+- **Enter total** and `total_received == total_sent` → status `closed`, response `{result: "match"}`.
+- **Enter total** and `total_received != total_sent` → status stays `sent`, response `{result: "mismatch", delta}`; client immediately opens the category check-off UI.
+- **Skip** (`{skip: true}`, `total_received` stays null) → response `{result: "check"}`; client goes **straight to the per-category check** — same UI as the mismatch path.
 
-Check-off submitted via `/reconcile` with per-category `count_received`; server stores the values and sets status `closed`. **Received-more-than-sent (PRD open question O4)** is handled by allowing `count_received > count_sent` per category and a positive `delta`; the UI labels it as a surplus rather than a shortfall. No blocking validation either way — the tool records reality, it doesn't police it.
+Check-off submitted via `/reconcile` with per-category `count_received`; server stores the values and sets status `closed`. **The sent tally stays read-only** throughout — reconcile only writes `count_received`, never `count_sent`. A reopened `sent`/`closed` load exposes an **add/minus receive-side counter per category** for physically double-checking pieces as they come back (PRD §3.1(11)), which just edits `count_received`.
+
+**Received-more-than-sent (PRD open question §7.4)** is handled by allowing `count_received > count_sent` per category and a positive `delta`; the UI labels it as a surplus rather than a shortfall. No blocking validation either way — the tool records reality, it doesn't police it.
 
 ### 5.5 Identity & authentication (Zitadel)
 
 Identity is delegated entirely to a **self-hosted Zitadel** OIDC server. Our code never stores credentials or issues tokens; it only validates them and keeps the minimal user mirror (§4.1).
 
-- **Passwordless, no signup (PRD §3.1).** The user enters only their email. Zitadel (via **Login V2**) creates the account **just-in-time** if it doesn't exist and sends a **one-time email code / magic link** as the *primary* factor; on verification Zitadel issues OIDC tokens. No password is ever set, and there is no separate signup step — exactly the counter-friendly, zero-setup flow the PRD requires.
+- **Passwordless, no signup (PRD §4.1).** The user enters only their email. Zitadel (via **Login V2**) creates the account **just-in-time** if it doesn't exist and sends a **one-time email code / magic link** as the *primary* factor; on verification Zitadel issues OIDC tokens. No password is ever set, and there is no separate signup step — exactly the counter-friendly, zero-setup flow the PRD requires.
 - **Login flow.** The SPA uses **OIDC Authorization Code + PKCE**, redirecting to Zitadel **Login V2** for the email-code exchange, then returning with id/access/refresh tokens. Building on Login V2 (rather than a hand-rolled screen) keeps the security-critical login UI in Zitadel's vetted, maintained component.
 - **API validation.** The API validates the bearer **access token against Zitadel's JWKS** (issuer + audience checks) on every request. No introspection round-trip on the hot path.
 - **Local user mirror.** On the first authenticated request, the API upserts `User {id, sub, email}` from the token claims; `email` is refreshed on subsequent logins so it can't drift. This is the only PII we persist.
-- **Offline.** Tokens are persisted client-side (IndexedDB) so an installed PWA stays authenticated through offline sessions (PRD §3.1: zero re-auth friction); access tokens are short-lived and refreshed on reconnect. Tradeoff noted in §9.
+- **Offline.** Tokens are persisted client-side (IndexedDB) so an installed PWA stays authenticated through offline sessions (PRD §4.1: zero re-auth friction); access tokens are short-lived and refreshed on reconnect. Tradeoff noted in §9.
 - **Local dev.** Zitadel core + Login V2 run as containers under Aspire (plain HTTP); OTP emails are captured by **Mailpit** (§10.3), so passwordless sign-in is fully exercisable offline of any real mail provider.
 
 ### 5.6 Zitadel self-hosting requirements on Azure Container Apps
@@ -400,15 +409,15 @@ Sources: [ACA — transport protocols](https://learn.microsoft.com/azure/contain
 
 | Screen | PRD ref | Notes |
 |---|---|---|
-| Sign in | §3.1 | email-only start → **OIDC redirect to Zitadel Login V2** for the email-code exchange; OIDC callback handler completes sign-in and stores tokens. |
-| Home / load list | §3.2 | list of loads with the load's primary (`is_primary`) photo as thumbnail + status chip; "New load" and per-load "⋮ → Duplicate". |
-| Create / edit load | §3.2–3.3 | shop, location, date + the tap-counter grid. |
-| Tap counter | §3.3 | category grid; each tile increments on tap; running total pinned. A category in `auto` mode may be photo-driven until first manual tap (§4.4). |
-| Load detail | §3.6 | manifest summary; "Mark sent". |
-| Receive | §3.7 | single number input → match (celebrate + close) or mismatch → check-off. |
-| Category check-off | §3.7/§3.8 | per-category received counts; used for mismatch (required) and home reconcile (optional). |
-| Photo capture | §3.5 | camera/file input for the bundle photo and per-category photos; a category photo **auto-creates a `LoadItem`** and links it (§4.4). |
-| Gallery | §3.5 | grid of all `LoadItem`/photo records for a load (join Load → categories → items → photos); the only per-item surface in the Phase-1 UI. |
+| Sign in | §4.1 | email-only start → **OIDC redirect to Zitadel Login V2** for the email-code exchange; OIDC callback handler completes sign-in and stores tokens. |
+| Home / load list | §4.2 | list of loads with the load's primary (`is_primary`) photo as thumbnail + status chip; "New load" and per-load "⋮ → Duplicate". |
+| Create / edit load | §4.2–4.3 | **H1 = load name** (defaults to today's date, editable) → **shop name + shop location (optional, recommended)** → the laundry list of pre-seeded categories. Add-custom-category free-text field; remove-category control. |
+| Tap counter | §4.3 | category grid; each tile increments on tap; running total pinned. A category in `auto` mode may be photo-driven until first manual tap (§4.4). |
+| Load detail | §4.6 | read-only sent manifest summary; "Mark sent" (top-right). |
+| Receive | §4.7 | prominent Receive action → total-received number input **or Skip**; match → celebrate + close; mismatch or skip → per-category check. |
+| Category check-off | §4.7/§4.8 | per-category **receive-side add/minus counter** (edits `count_received` only, sent tally read-only); used for mismatch/skip (to close) and optional home double-check on sent/closed loads. |
+| Photo capture | §4.5 | camera button per category (+ bundle photo); a category photo **auto-creates a `LoadItem`** and links it (§4.4). |
+| Gallery | §4.5 | grid of all `LoadItem`/photo records for a load (join Load → categories → items → photos); the only per-item surface in the Phase-1 UI. |
 
 ### 6.3 Counter UX (the make-or-break number)
 
@@ -435,7 +444,7 @@ PRD success metric is **< 60s to itemize**. Design implications:
 2. **Mutation queue**: each local change appends an op `{entity, id, op, payload, updated_at}` to an outbox in IndexedDB.
 3. **Push**: `POST /sync` sends the outbox; server applies ops idempotently (upsert by id).
 4. **Pull**: same call returns server changes since the client's `cursor` (a monotonic version/timestamp). Client merges.
-5. **Conflict resolution**: **last-writer-wins by `updated_at`** at the record level. This is acceptable for MVP because Phase 1 is **single-user** (PRD out-of-scope: multi-user), so real conflicts are limited to the same user on two devices — rare, and LWW is a reasonable loss function. Sent/closed status transitions are monotonic and never regressed by an older update.
+5. **Conflict resolution**: **last-writer-wins by `updated_at`** at the record level. This is acceptable for MVP because Phase 1 is **single-user** (PRD §5 out-of-scope: multi-user), so real conflicts are limited to the same user on two devices — rare, and LWW is a reasonable loss function. Sent/closed status transitions are monotonic and never regressed by an older update.
 6. **Photos**: uploaded out-of-band to Blob via pre-signed URLs; the `/sync` payload only carries photo metadata + `blob_key`, never bytes.
 
 ---
@@ -527,28 +536,28 @@ If two environments prove more cost than the MVP justifies, Zitadel core + Login
 
 | PRD § | Feature | Where implemented |
 |---|---|---|
-| 3.1 | Passwordless email auth | **Zitadel** (Login V2, email-OTP, JIT user); API validates JWTs via JWKS; Mailpit locally (§5.5–5.6) |
-| 3.2 | Create a load | `loads/`; `POST /loads`; create/edit screen |
-| 3.3 | Itemize tap-counter | `LoadItemCategory` (category + `count_sent`); auto/manual `count_mode` (§4.4); tap-counter screen (§6.3) |
-| 3.4 | Duplicate load | `/duplicate` + client-side duplicate (§5.3) |
-| 3.5 | Photos (optional) | `Photo` + `PhotoLink` junction; auto-created `LoadItem` + gallery; Blob + Azurite; pre-signed upload (§4.1, §8) |
-| 3.6 | Send | `/loads/{id}/send` freezes `total_sent` (§4.2) |
-| 3.7 | Receive & reconcile | `/receive` + `/reconcile`; match/mismatch (§5.4) |
-| 3.8 | Home reconcile (optional) | `/reconcile` on closed load; `reconciled` flag |
-| 3.9 | Offline-first | PWA service worker + IndexedDB + `/sync` (§6.4, §7) |
-| 3.10 | Shop record-keeping | `shop_name`/`shop_location` on `Load`; capture only |
+| 4.1 | Passwordless email auth | **Zitadel** (Login V2, email-OTP, JIT user); API validates JWTs via JWKS; Mailpit locally (§5.5–5.6) |
+| 4.2 | Create a load | `loads/`; `POST /loads`; create/edit screen — `name` defaults to date, optional shop fields (§4.1, §6.2) |
+| 4.3 | Itemize + custom categories | pre-seeded template + custom free-text `LoadItemCategory`; auto/manual `count_mode` (§4.3, §4.4); tap-counter screen (§6.3) |
+| 4.4 | Duplicate load | `/duplicate` + client-side duplicate; carries categories, resets name to date (§5.3) |
+| 4.5 | Photos (optional) | `Photo` + `PhotoLink` junction; auto-created `LoadItem` + gallery; Blob + Azurite; pre-signed upload (§4.1, §8) |
+| 4.6 | Send | `/loads/{id}/send` freezes `total_sent`, sent manifest read-only (§4.2) |
+| 4.7 | Receive & reconcile | `/receive` (enter **or skip**) + `/reconcile`; match/mismatch/skip; receive-side counter (§5.4) |
+| 4.8 | Home reconcile (optional) | `/reconcile` on closed load; `reconciled` flag |
+| 4.9 | Offline-first | PWA service worker + IndexedDB + `/sync` (§6.4, §7) |
+| 4.10 | Shop record-keeping | optional `shop_name`/`shop_location` on `Load`; capture only |
 
 ---
 
-## 14. Deferred / open (tracked from PRD §6)
+## 14. Deferred / open (tracked from PRD §7)
 
-| PRD Q | Decision in this spec |
+| PRD Q (§7) | Decision in this spec |
 |---|---|
-| O1 default categories | Fixed list of 10 (§4.3); **no custom categories** in Phase 1 |
-| O2 draft state | **Yes** — explicit `draft` state (§4.2) |
-| O3 data retention | Not implemented in Phase 1; no auto-purge. Flag storage growth for photos — revisit before GA |
-| O4 received > sent | Handled as **surplus** (positive delta), no blocking (§5.4) |
-| O5 multiple open loads same shop | Allowed; loads are independent records, disambiguated by date + thumbnail in the list |
-| O6 reconcile reminder | Out of scope Phase 1 (PRD backlog); no notification infra built |
+| §7.1 categories / custom reuse | Pre-seeded template + **custom free-text allowed** (§4.3). Custom categories are **one-load-only**; reuse is via Duplicate. A saved/personal category list is **deferred** to a later phase |
+| §7.2 draft/counting lifecycle | Explicit `draft` ("Draft / Counting") state exists (§4.2); **abandoned-draft cleanup** (auto-save vs. discard vs. archive) is **unresolved** for Phase 1 — no purge rule built |
+| §7.3 data retention | Not implemented in Phase 1; no auto-purge. Flag storage growth for photos — revisit before GA |
+| §7.4 received > sent | Handled as **surplus** (positive delta), no blocking (§5.4) |
+| §7.5 multiple open loads same shop | Allowed; loads are independent records, disambiguated by name/date + thumbnail in the list |
+| §7.6 reconcile reminder | Out of scope Phase 1 (PRD backlog); no notification infra built |
 
 **Per-item model is forward-looking groundwork.** The `LoadItem` entity and the `PhotoLink` junction (§4.1) are modelled now so the schema can carry per-item detail and multi-entity/multi-photo attachments across later phases. In the **Phase-1 UI**, per-item surface is intentionally minimal: items are **auto-created on photo capture** (name = category) and viewed only through the **gallery** (§6.2) — there is no per-item editing/rename UI yet, and photos are limited to **one per entity** (§4.1). The data model accommodates the growth; the UI does not build it.
