@@ -43,61 +43,119 @@ The laundry shop itself. Phase 1 does not build anything the shop interacts with
 
 ---
 
-## 3. Core Features
+## 3. Expected Workflow (Happy Path)
 
-### 3.1 Authentication
+This section walks through the product end-to-end as Bianca would actually experience it, from opening the app to closing a fully reconciled load. It's the "happy flow" the MVP is designed around — everything in [Core Features](#4-core-features) exists to serve these steps. Phases 2 (AI photo capture) and 3 (shop involvement) deliberately add complexity on top of this baseline and are **out of scope here**; this workflow assumes no AI and no shop-side interaction.
+
+### 3.1 Narrative walkthrough
+
+1. **Sign in.** Bianca opens the app and signs in passwordlessly (email code/magic link). No password to remember.
+2. **Start a load.** She creates a new load. By default the load is **named after the current date** (editable), so she doesn't have to think of a name at the counter.
+3. **Pre-filled category template appears.** The load opens with a **pre-filled set of common categories** already laid out — e.g., Shirts, Pants, Socks — so she can start counting immediately without setup.
+4. **Add custom categories (optional).** If she has something the template doesn't cover, she adds her own category through a **free-text field** (e.g., "Bedsheets", "Jerseys"). The new category joins the list for this load.
+5. **Count the items.** For each category she **taps the counter** to add pieces (tap-tap-tap = 3), and can tap a minus control to correct an over-count. She repeats across categories until the load reflects what's physically in front of her.
+6. **Attach photos (optional).** Next to each category is a **camera button**. She can tap it to photograph that item type for documentation. This is entirely optional — skipping it never blocks anything.
+7. **Review the load screen.** The load screen reads like a laundry list: the load name (the date), each category with its running count, and the grand total (e.g., "Shirts 6, Pants 2, Socks 8 — 16 items"). She can keep adjusting counts until it's right.
+8. **Send.** When the manifest matches what she's handing over, she taps **Send** (top-right). The load moves to **Sent** status — her signal that these clothes are now with the laundry shop. The sent manifest is **locked as the source-of-truth record**.
+9. **Sent view (read-only).** Opening a load that's already been sent shows everything **read-only**: the total number of items sent, plus the per-category tally of exactly what went out. Nothing here can be edited — it's the record she'll reconcile against.
+10. **Receive — enter total received.** When she picks the laundry up, she taps a **Receive** action (top-right / prominent, user-friendly placement). She's prompted to **type the total number of items received**. This step is **skippable**.
+    - **Total received matches total sent →** the load is marked **Closed** (reconciled). Done in seconds.
+    - **Skipped →** she's taken straight to the **per-category check** (step 11), where she can count each category piece-by-piece instead of entering a single total.
+11. **Closed load — per-piece double-check.** She can reopen a closed (or sent) load at any time. The **sent totals stay read-only**, but each category still exposes an **add/minus tap-counter for the receiving side** — so she can physically count pieces as they come back and confirm she got the correct number for each category, without ever altering the original sent record.
+
+### 3.2 States in this flow
+
+| State | What it means | What's editable |
+|---|---|---|
+| **Draft / Counting** | Load created, still itemizing | Categories and counts fully editable; photos addable |
+| **Sent** | Clothes handed to the shop; manifest locked | Sent counts read-only; Receive action available |
+| **Closed** | Received total entered and reconciled | Sent counts read-only; receive-side counter available for double-checking pieces |
+
+### 3.3 Flow diagram
+
+```mermaid
+flowchart TD
+    A[Sign in] --> B[Start a load<br/>default name = today's date]
+    B --> C[Pre-filled category template<br/>Shirts, Pants, Socks...]
+    C --> D{Need another category?}
+    D -- Yes --> E[Add custom category<br/>free-text field]
+    E --> F
+    D -- No --> F[Tap-count items per category<br/>+ / - controls]
+    F --> G[Optional: camera button<br/>photo per category]
+    G --> H[Review load screen<br/>laundry list + grand total]
+    H --> I{Manifest correct?}
+    I -- No --> F
+    I -- Yes --> J[Send - top right<br/>status: SENT, manifest locked]
+    J --> K[Sent view: read-only<br/>total + per-category tally]
+    K --> L[Receive action<br/>enter total received]
+    L --> M{Enter or skip?}
+    M -- Enter total --> O{Received == Sent?}
+    O -- Match --> P[Mark load CLOSED]
+    O -- Mismatch --> Q
+    M -- Skip --> Q[Per-category check<br/>count each category<br/>piece-by-piece]
+    Q --> P
+    P --> R[Reopen closed load<br/>read-only totals +<br/>per-piece double-check counter]
+```
+
+---
+
+## 4. Core Features
+
+### 4.1 Authentication
 - **Passwordless email sign-in** — user enters email, receives a one-time code or magic link, is authenticated immediately.
 - No password creation, no password recovery flow, no separate signup step.
 
-### 3.2 Create a Load
+### 4.2 Create a Load
 - User creates a new load by entering:
   - Shop name
   - Shop location
   - Send-out date
 - This becomes the load's header record.
 
-### 3.3 Itemize (Category Tap-Counter)
-- Predefined clothing categories (e.g., Shirts, Trousers, Socks, Underwear, Towels, etc.).
+### 4.3 Itemize (Category Tap-Counter)
+- Each new load opens with a pre-filled set of common clothing categories (e.g., Shirts, Trousers, Socks, Underwear, Towels, etc.).
+- User can add a custom category via a free-text field when the default set doesn't cover what's in the load.
 - Tapping a category increments its count by one (tap-tap-tap = 3).
 - A running total across all categories is shown as the load's manifest summary (e.g., "Shirts: 6, Trousers: 2, Socks: 8 — 16 items total").
 - No per-item (individual piece) data entry in Phase 1 — category + count only.
 
-### 3.4 Duplicate Load
+### 4.4 Duplicate Load
 - From the home screen or an open load, a menu action ("Duplicate") creates a new load.
 - **Only the clothing categories carry over** (e.g., if the original had Shirts, Trousers, Socks as active categories, the duplicate starts with those same categories present).
 - Everything else resets: shop, location, date, all counts return to zero, and all photos are cleared.
 - This is the MVP's answer to "reusable templates" — no separate template object is needed.
 
-### 3.5 Photos (Optional)
+### 4.5 Photos (Optional)
 - **Bundle photo** — one optional photo per load, doubles as the load's thumbnail/icon.
 - **Per-category photos** — optional photos attached manually at the category level.
 - Neither is required to create, send, or close a load.
 
-### 3.6 Send
+### 4.6 Send
 - User marks the load "sent." This locks the itemized manifest as the sent-state record — the source of truth for reconciliation.
 
-### 3.7 Receive & Reconcile (Counter-Side)
-- User opens the sent load and enters a **single total count received**.
-- The app compares total received vs. total sent:
+### 4.7 Receive & Reconcile (Counter-Side)
+- User opens the sent load and can either enter a **single total count received** or skip straight to a per-category check.
+- If total received is entered, the app compares total received vs. total sent:
   - **Match** → load closes immediately (green state). Done in seconds.
   - **Mismatch** → the app automatically prompts an item-by-item, category-level check-off right there, so the user can identify and dispute the specific shortfall with the shop while still present.
+- If total received is skipped, the app takes the user directly to the same item-by-item, category-level check-off flow.
 
-### 3.8 Reconcile at Home (Optional)
+### 4.8 Reconcile at Home (Optional)
 - After leaving the counter, the user may return to any closed or open load and do a category-by-category check-off for her own records.
 - This is entirely optional and not required to close a load — it exists for diligent users who want a fuller record.
 
-### 3.9 Offline-First Operation
+### 4.9 Offline-First Operation
 - Built as an installable PWA.
 - Core flows (create load, itemize, mark sent, enter received count) must work with no network connection, given that shop counters are frequently low- or no-signal environments.
 - Data syncs when connectivity returns.
 
-### 3.10 Shop Record-Keeping
+### 4.10 Shop Record-Keeping
 - Every load stores which shop and location it was sent to.
 - Phase 1 does pure data capture only — no scoring, no analytics, no aggregation. This is the foundation Phase 3's reliability metrics will be built on.
 
 ---
 
-## 4. Out of Scope (Phase 1)
+## 5. Out of Scope (Phase 1)
 
 - **Shop-side confirmation or two-sided receipts** — the shop has no interaction with the app in this phase. (Planned for Phase 3.)
 - **AI/camera-based clothing detection** — all itemization is manual tap-counting in Phase 1. (Planned for Phase 2.)
@@ -110,7 +168,7 @@ The laundry shop itself. Phase 1 does not build anything the shop interacts with
 
 ---
 
-## 5. Success Metrics
+## 6. Success Metrics
 
 Recommended for Phase 1, split into **usability metrics** (is the product fast/frictionless enough to actually get used) and **adoption/engagement metrics** (is it being used at all, and repeatedly):
 
@@ -131,10 +189,10 @@ Given this is a solo, pre-launch build, raw user-count growth metrics (e.g., tot
 
 ---
 
-## 6. Open Questions
+## 7. Open Questions
 
-1. **Default clothing categories** — what's the initial fixed list of categories (Shirts, Trousers, Socks, Underwear, Towels, Bedsheets, etc.)? Does the user need the ability to add a custom category in Phase 1, or is a fixed list sufficient to start?
-2. **Load states beyond "sent" and "closed"** — is there a need for a "draft" state (load created but not yet sent), or does creating a load immediately imply intent to send?
+1. **Default clothing categories** — what's the initial fixed list of categories (Shirts, Trousers, Socks, Underwear, Towels, Bedsheets, etc.)? Should custom categories remain one-load-only, or be saved for reuse in future loads?
+2. **Draft / Counting state behavior** — what should happen to partially itemized loads that are never sent: auto-save indefinitely, prompt for discard, or apply some cleanup/archive rule?
 3. **Data retention** — how long are closed loads and their photos retained? Any storage limits to plan for, especially for photo-heavy users?
 4. **What happens on a "received more than sent" mismatch** — the discrepancy flag is framed around shortfalls, but what if the count is *higher* than expected (e.g., another customer's item got mixed in)? Does this need distinct handling from a shortfall?
 5. **Multiple loads open at the same shop simultaneously** — can a user have two loads in-flight to the same shop at once (e.g., a regular wash and a delicates load sent separately)? Does the UI need to disambiguate these clearly?
