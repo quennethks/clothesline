@@ -453,7 +453,8 @@ PRD success metric is **< 60s to itemize**. Design implications:
 
 - Service worker precaches the app shell + category template → app opens with no network.
 - All actions (create, itemize, send, receive, reconcile, duplicate) are **RxDB writes**; the UI updates reactively from RxDB and RxDB replication carries the changes when connectivity returns — the app never awaits the network.
-- Photos captured offline: the `Photo`, its `PhotoLink`, and the auto-created `LoadItem` are written to RxDB immediately; the image **bytes** are stashed locally with the client-only `local_only` flag and uploaded via `/media/upload-url` on reconnect (then `blob_key` is set, which syncs).
+- Photos captured offline: the `Photo`, its `PhotoLink`, and the auto-created `LoadItem` are written to RxDB immediately; the image **bytes** are stashed locally with the client-only `local_only` flag and drained to Blob by the **upload queue** on reconnect (then `blob_key` is set, which syncs) — §8.2.
+- Viewing photos offline: photos captured on this device are always viewable (bytes kept as a local cache); photos from another device/evicted are viewable offline only if previously opened while online (**lazy cache-on-view**) — §8.3.
 - A subtle sync indicator reflects RxDB replication state (active/pending/error); it never blocks the core flow.
 - **Auth is online-only by nature** (sign-in requires reaching Zitadel), but once tokens are stored the core counter flow runs fully offline; tokens refresh on reconnect.
 
@@ -483,13 +484,47 @@ Clothesline is a **web app**, so it must be usable on large screens as well as p
 
 ---
 
-## 8. Photo storage
+## 8. Photo storage & offline photo sync
 
-- Bytes live in **Azure Blob Storage**; the DB stores only the `Photo` (`blob_key` + metadata) and its `PhotoLink`(s) — never image bytes.
-- Upload path: client creates the `Photo`/`PhotoLink`/`LoadItem` **documents** in RxDB (they sync), calls **`POST /media/upload-url`** for a pre-signed URL, PUTs bytes directly to Blob, then sets the `photos` doc's `blob_key` (which syncs). Keeps large payloads off the API container. A category photo also yields the auto-created `LoadItem` + `PhotoLink` (§4.4).
-- Read path: **`GET /media/{photo_id}`** returns a short-lived read SAS URL (user-scoped) so blobs aren't public.
-- Images are compressed client-side (target WebP) before upload to respect mobile data.
-- **Local dev** uses **Azurite** (Blob emulator) wired by Aspire, so no cloud account is needed to develop the photo flow.
+A photo is **two things carried on two different channels**: its **metadata** (small — the `Photo`/`PhotoLink`/`LoadItem` documents plus a `blob_key` pointer) and its **bytes** (the image file, potentially several MB). Metadata rides RxDB replication like all other data; **bytes never travel through the DB or `/sync`** — they live in **Azure Blob Storage** and move **directly between the device and Blob** via short-lived pre-signed URLs the API mints. This split keeps multi-MB binaries off the sync channel and off the API container.
+
+Because RxDB only ever syncs the *documents*, the byte side needs its **own offline↔online plumbing** — **this is the one piece of sync logic we own** rather than get from RxDB. It is two small client-side workers (an **upload queue** and **lazy cache-on-view** reads), both keyed off local state + connectivity.
+
+### 8.1 Metadata vs. bytes — who carries what
+
+| | Carried by | Offline behavior |
+|---|---|---|
+| Photo metadata (`photos`/`photo_links`/`load_items` docs, incl. `blob_key`) | **RxDB replication** (automatic) | queued + replayed by RxDB |
+| Image **bytes** | **our upload/read workers** + Azure Blob | stashed/cached locally, moved when online |
+
+Two flags bridge them:
+- **`blob_key`** — a normal **synced** field, `null` until the bytes are in Blob. Once set, every device knows "the bytes exist, filed under this key."
+- **`local_only`** — a **client-only** flag (never synced) meaning "the bytes are on *this* device and not yet uploaded."
+
+### 8.2 Upload path (pushing bytes up)
+
+1. **Capture (online *or* offline, same path):** create the `Photo` doc (`blob_key = null`) + `PhotoLink` (+ auto-created `LoadItem`, §4.4) in RxDB; **stash the image bytes locally** in a dedicated IndexedDB byte store keyed by `photo_id`; set `local_only = true`. Bytes are WebP-compressed first (mobile data).
+2. **Upload queue (runs whenever online):** a background worker scans for photos with `local_only = true` and, for each, `POST /media/upload-url` → `PUT` bytes **directly to Blob** → set `blob_key` on the `photos` doc → clear `local_only`. Retries with backoff. Bytes never pass through `/sync` or the API.
+3. Setting `blob_key` is a normal RxDB write, so **RxDB syncs it** — the server and other devices now learn the bytes exist.
+4. **Bytes are kept as a local cache** after upload (not deleted) — they become this device's offline copy (§8.3).
+
+### 8.3 Read path & offline viewing (pulling bytes down)
+
+**An RxDB pull brings only the document, not the image.** So whether a photo is viewable offline depends on whether its bytes are on *this* device:
+
+- **Captured on this device → always offline-viewable.** Its bytes were stashed on capture and kept as cache (§8.2.4); no download needed. *(This is the dominant case — you photograph a piece at the counter and review it seconds later, offline, on the same phone.)*
+- **Bytes not local** (captured on another of the user's devices, or evicted from cache) → **lazy cache-on-view**: when online, opening the photo calls **`GET /media/{photo_id}`** → read SAS URL → fetches bytes from Blob → **caches them locally**, so it's viewable offline thereafter. A photo **never opened while online** shows a **"connect to view"** placeholder when offline.
+- **Pending state:** a synced `photos` doc can arrive with `blob_key = null` (the capturer hasn't drained its upload queue yet). Viewers show a **pending/placeholder** until `blob_key` fills in.
+
+The local byte cache is **LRU-evictable** under storage pressure; an evicted photo simply falls back to lazy re-fetch. **Deferred (not Phase 1):** *eager prefetch* — a download queue that proactively pulls every new photo's bytes after each sync for full offline mirroring; it's the same pattern turned up, but costs bandwidth/storage that photo-heavy users rarely need. MVP uses **lazy cache-on-view**.
+
+### 8.4 Access & security
+
+The Blob container is **private** — nothing is publicly reachable. Every upload and read goes through a **short-lived, permission-scoped SAS URL** minted by the API (`/media/*`), which first verifies the photo belongs to a load the authenticated user owns. The storage account key is never exposed to the client.
+
+### 8.5 Local dev
+
+Aspire runs **Azurite** (Blob emulator), so the whole capture → upload → cache → view flow works locally with no cloud account.
 
 ---
 
