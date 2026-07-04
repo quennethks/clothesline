@@ -15,6 +15,7 @@ Build **thin, end-to-end, and local-first.** The riskiest, most differentiating 
 Sequencing principles:
 - **Skeleton before features** — get `aspire run` booting the containers + Postgres/Azurite on day one.
 - **Local-first, not "offline bolted on later"** — M3 builds every flow as **RxDB writes** (client is the system of record); M4 adds the generic `/sync/{collection}` replication + PWA shell.
+- **Auth lands early** — M5 (Zitadel) is sequenced **right after M2**, so the load lifecycle (M3) is built against real sign-in, not a throwaway stub.
 - **Vertical slices** — each milestone delivers a demoable user-visible capability, not a horizontal layer.
 - **Tests ride with the code** — pytest/Vitest per milestone; Playwright e2e (incl. the offline flow) gates the milestones that complete a user journey.
 
@@ -29,12 +30,14 @@ Effort tags are **T-shirt sizes** (S/M/L), not calendar estimates — this is a 
 | M0 | Repo & toolchain | Dev container + repo scaffolding, CI skeleton | — |
 | M1 | Aspire walking skeleton | `aspire run` boots web + api + Postgres + Azurite + Zitadel core + Login V2; one live `/health` round-trip | M0 |
 | M2 | Data model & migrations | `clothesline_db` (SQLAlchemy models + Alembic); empty domain modules | M1 |
-| M3 | Load lifecycle on local RxDB | Create → itemize → send → receive/reconcile/duplicate/delete as local RxDB writes + UI (works offline, no server) | M2 |
+| M5 | Integrate Zitadel (passwordless) | OIDC/PKCE to Login V2, JWKS validation, minimal user upsert, Mailpit locally | M1, M2 |
+| M3 | Load lifecycle on local RxDB | Create → itemize → send → receive/reconcile/duplicate/delete as local RxDB writes + UI (works offline) | M2 |
 | M4 | Replication & PWA | Generic `/sync/{collection}` pull/push + RxDB replication, push-time validators, service worker/install, polling | M3 |
-| M5 | Integrate Zitadel (passwordless) | OIDC/PKCE to Login V2, JWKS validation, minimal user upsert, Mailpit locally | M1 |
-| M6 | Photos | Per-category/bundle photos, gallery, upload queue + offline view (lazy cache); pre-signed Blob | M4 (M5 for scoping) |
+| M6 | Photos | Per-category/bundle photos, gallery, upload queue + offline view (lazy cache); pre-signed Blob | M4 |
 | M7 | Polish (UX & responsive) | Counter UX targets, responsive/desktop layout, empty/error states | M3 |
 | M8 | E2E hardening & deploy | Full Playwright suite (incl. offline) + `azd up` to ACA | M4, M5, M6, M7 |
+
+> Rows are in **recommended build order** (top-to-bottom); the **M-number is a stable identifier**, not a position. **M5 (Zitadel) is intentionally sequenced right after M2** so auth lands early — it then runs in parallel with M3/M4, and the load lifecycle is built against real sign-in rather than a stub.
 
 ### Dependency graph
 
@@ -42,7 +45,8 @@ Effort tags are **T-shirt sizes** (S/M/L), not calendar estimates — this is a 
 flowchart LR
     M0["M0 · Repo & toolchain"] --> M1["M1 · Aspire skeleton"]
     M1 --> M2["M2 · Data model & migrations"]
-    M1 --> M5["M5 · Integrate Zitadel"]
+    M2 --> M5["M5 · Integrate Zitadel<br/>(right after M2)"]
+    M1 --> M5
     M2 --> M3["M3 · Load lifecycle on local RxDB"]
     M3 --> M4["M4 · Replication & PWA"]
     M3 --> M7["M7 · Polish (UX & responsive)"]
@@ -51,7 +55,6 @@ flowchart LR
     M5 --> M8
     M6 --> M8
     M7 --> M8
-    M2 -.->|User table| M5
 ```
 
 ---
@@ -134,7 +137,7 @@ Make M3's local data durable and cross-device via **RxDB replication** against t
 
 Server (`clothesline_api`):
 - [ ] **Generic `GET/POST /sync/{collection}`** pull/push handlers over the shared `id`/`updated_at`/`deleted_at` shape: pull ordered by `(updated_at, id)` from a checkpoint; push idempotent upsert-by-id returning **conflicts only**; server **authors `updated_at`**; `_deleted` tombstones (spec §7).
-- [ ] **Per-collection validators** (`domain/`): user ownership + invariants (freeze `total_sent`, reject edits to a `sent` manifest → returned as conflict). Scope every collection to the authenticated user (stub user until M5).
+- [ ] **Per-collection validators** (`domain/`): user ownership + invariants (freeze `total_sent`, reject edits to a `sent` manifest → returned as conflict). Scope every collection to the **authenticated user** (real, since M5 is sequenced earlier).
 
 Client:
 - [ ] One `replicateRxCollection` per collection → `/sync/{collection}`, `deletedField: '_deleted'`, `live: true`, retry; **pull-on-reconnect + interval polling** (SSE deferred to Phase 3).
@@ -149,7 +152,7 @@ Tests:
 ---
 
 ### M5 — Integrate Zitadel (passwordless)  ·  size **M**
-Replace the stub user with real sign-in delegated to Zitadel (PRD §4.1; spec §5.5–5.6). No auth UI or token issuance is built by us. **Depends only on M1** (Zitadel + API up) — it can run in parallel with M2–M4; the single M2 touchpoint is the **`User` table** the upsert writes to.
+Real sign-in delegated to Zitadel (PRD §4.1; spec §5.5–5.6). No auth UI or token issuance is built by us. **Sequenced right after M2** (needs M1's Zitadel + API and M2's `User` table) so it's in place before the load lifecycle — M3/M4 then scope to a real user instead of a stub.
 
 - [ ] Configure the Zitadel instance: a passwordless project with **email-OTP as the primary factor** and **JIT user creation** (no signup); Login V2 enabled (`LOGINV2_REQUIRED`).
 - [ ] Frontend: **OIDC Authorization Code + PKCE** client that redirects to **Login V2** for the email-code exchange, handles the callback, and persists tokens to survive offline (spec §9 tradeoff).
@@ -165,7 +168,7 @@ Tests:
 ---
 
 ### M6 — Photos, per-item groundwork & gallery  ·  size **M**
-Optional evidence capture + the `Photo`/`PhotoLink`/`LoadItem` groundwork (PRD §4.5; spec §4.1, §4.4, §8). **Depends on M4** — the photo docs replicate through `/sync` and the `/media` endpoint needs the server; user-scoped SAS hardens once **M5** lands (uses the stub user before then).
+Optional evidence capture + the `Photo`/`PhotoLink`/`LoadItem` groundwork (PRD §4.5; spec §4.1, §4.4, §8). **Depends on M4** — the photo docs replicate through `/sync` and the `/media` endpoint needs the server; the pre-signed SAS is user-scoped against the real authenticated user (M5 precedes M4).
 
 - [ ] Client flow: create `photos` + `photo_links` (+ auto-created `load_items`) **docs in RxDB** (they sync via §7); call **`POST /media/upload-url`** → PUT bytes to Blob → set `blob_key` (syncs). `GET /media/{photo_id}` returns a read SAS; **Gallery screen** joins load → categories → items → photos (spec §5.2, §6.2).
 - [ ] Category photo **auto-creates a `LoadItem`** (name = category) and links it; **auto-mode count** increments on add / decrements on delete (floor 0), never once the category is manual (spec §4.4).
