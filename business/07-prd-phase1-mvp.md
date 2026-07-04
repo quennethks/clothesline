@@ -58,9 +58,9 @@ This section walks through the product end-to-end as Bianca would actually exper
 7. **Review the load screen.** The load screen reads like a laundry list: the load name (the date), each category with its running count, and the grand total (e.g., "Shirts 6, Pants 2, Socks 8 — 16 items"). She can keep adjusting counts until it's right.
 8. **Send.** When the manifest matches what she's handing over, she taps **Send** (top-right). The load moves to **Sent** status — her signal that these clothes are now with the laundry shop. The sent manifest is **locked as the source-of-truth record**.
 9. **Sent view (read-only).** Opening a load that's already been sent shows everything **read-only**: the total number of items sent, plus the per-category tally of exactly what went out. Nothing here can be edited — it's the record she'll reconcile against.
-10. **Receive — enter total received.** When she picks the laundry up, she taps a **Receive** action (top-right / prominent, user-friendly placement). She's prompted to **type the total number of items received**. This step is **skippable** — she can defer it and the load simply stays open.
+10. **Receive — enter total received.** When she picks the laundry up, she taps a **Receive** action (top-right / prominent, user-friendly placement). She's prompted to **type the total number of items received**. This step is **skippable**.
     - **Total received matches total sent →** the load is marked **Closed** (reconciled). Done in seconds.
-    - **Skipped →** allowed; the load stays open and she can reconcile later.
+    - **Skipped →** she's taken straight to the **per-category check** (step 11), where she can count each category piece-by-piece instead of entering a single total.
 11. **Closed load — per-piece double-check.** She can reopen a closed (or sent) load at any time. The **sent totals stay read-only**, but each category still exposes an **add/minus tap-counter for the receiving side** — so she can physically count pieces as they come back and confirm she got the correct number for each category, without ever altering the original sent record.
 
 ### 3.2 States in this flow
@@ -89,13 +89,12 @@ flowchart TD
     J --> K[Sent view: read-only<br/>total + per-category tally]
     K --> L[Receive action<br/>enter total received]
     L --> M{Enter or skip?}
-    M -- Skip --> N[Load stays open<br/>reconcile later]
     M -- Enter total --> O{Received == Sent?}
     O -- Match --> P[Mark load CLOSED]
-    O -- Mismatch --> Q[Per-category check-off<br/>identify the shortfall]
-    P --> R[Reopen closed load<br/>read-only totals +<br/>per-piece double-check counter]
-    N --> L
+    O -- Mismatch --> Q
+    M -- Skip --> Q[Per-category check<br/>count each category<br/>piece-by-piece]
     Q --> P
+    P --> R[Reopen closed load<br/>read-only totals +<br/>per-piece double-check counter]
 ```
 
 ---
