@@ -29,11 +29,11 @@ Effort tags are **T-shirt sizes** (S/M/L), not calendar estimates — this is a 
 | M0 | Repo & toolchain | Dev container + repo scaffolding, CI skeleton | — |
 | M1 | Aspire walking skeleton | `aspire run` boots web + api + Postgres + Azurite + Zitadel core + Login V2; one live `/health` round-trip | M0 |
 | M2 | Data model & migrations | `clothesline_db` (SQLAlchemy models + Alembic); empty domain modules | M1 |
-| M3 | Load lifecycle on local RxDB | Create → itemize → send → receive/reconcile/duplicate as local RxDB writes + UI (works offline, no server) | M2 |
+| M3 | Load lifecycle on local RxDB | Create → itemize → send → receive/reconcile/duplicate/delete as local RxDB writes + UI (works offline, no server) | M2 |
 | M4 | Replication & PWA | Generic `/sync/{collection}` pull/push + RxDB replication, push-time validators, service worker/install, polling | M3 |
-| M5 | Integrate Zitadel (passwordless) | OIDC/PKCE to Login V2, JWKS validation, minimal user upsert, Mailpit locally | M2 |
-| M6 | Photos | Bundle + per-category photos, pre-signed Blob upload, offline capture | M3 |
-| M7 | Duplicate & polish | Duplicate flow, counter UX targets, empty/error states | M3 |
+| M5 | Integrate Zitadel (passwordless) | OIDC/PKCE to Login V2, JWKS validation, minimal user upsert, Mailpit locally | M1 |
+| M6 | Photos | Per-category/bundle photos, gallery, upload queue + offline view (lazy cache); pre-signed Blob | M4 (M5 for scoping) |
+| M7 | Polish (UX & responsive) | Counter UX targets, responsive/desktop layout, empty/error states | M3 |
 | M8 | E2E hardening & deploy | Full Playwright suite (incl. offline) + `azd up` to ACA | M4, M5, M6, M7 |
 
 ### Dependency graph
@@ -42,15 +42,16 @@ Effort tags are **T-shirt sizes** (S/M/L), not calendar estimates — this is a 
 flowchart LR
     M0["M0 · Repo & toolchain"] --> M1["M1 · Aspire skeleton"]
     M1 --> M2["M2 · Data model & migrations"]
+    M1 --> M5["M5 · Integrate Zitadel"]
     M2 --> M3["M3 · Load lifecycle on local RxDB"]
-    M2 --> M5["M5 · Integrate Zitadel"]
     M3 --> M4["M4 · Replication & PWA"]
-    M3 --> M6["M6 · Photos"]
-    M3 --> M7["M7 · Duplicate & polish"]
+    M3 --> M7["M7 · Polish (UX & responsive)"]
+    M4 --> M6["M6 · Photos"]
     M4 --> M8["M8 · E2E hardening & deploy"]
     M5 --> M8
     M6 --> M8
     M7 --> M8
+    M2 -.->|User table| M5
 ```
 
 ---
@@ -91,7 +92,7 @@ Persistence for the domain, in the shared data package (spec §3, §4, §5.1).
 - [ ] **Sync-ready columns**: `updated_at` (`timestamptz`, **server-authored** via DB default/trigger; serialized as **ISO 8601 UTC** on the wire — never epoch numbers, spec §4) + `deleted_at`; per-table index on `(user-scope, updated_at, id)` for ordered pulls (spec §7).
 - [ ] Alembic migration project **inside `clothesline_db`**; initial migration creates the schema. (Execution is a pipeline step, not an ACA job — spec §11.2.)
 - [ ] Client-generated UUID PKs accepted on write (spec §7).
-- [ ] Static category **template** (spec §4.3) shared as config on server (validation) and client (offline seed).
+- [ ] Static category **template** (spec §4.3) as shared config: the client's new-load seed; the server treats it as a **default only — it accepts arbitrary category strings, not a closed allow-list** (custom categories are free text).
 - [ ] Empty `clothesline_api` packages stubbed (spec §5.1): `auth/`, `sync/` (generic handler), `domain/` (per-collection validators), `media/` — importing models from `clothesline_db`.
 - [ ] pytest: a throwaway-Postgres fixture whose schema is built by running the `clothesline_db` migrations (exercises the real Alembic path).
 
@@ -112,11 +113,11 @@ Flows (all local writes, business logic client-side):
 - [ ] **Receive** — number entry **or Skip**: match → `closed`; mismatch/skip → per-category check; **surplus** allowed (spec §5.4).
 - [ ] **Reconcile** — receive-side add/minus counter writes `count_received` only; closes the load.
 - [ ] **Duplicate** — new date-named draft carrying the source's category set only (spec §5.3).
-- [ ] **Delete** — user removes a load of any state (list ⋮ / detail, with confirm); local soft-delete → tombstone that syncs (spec §7). This is the only cleanup for abandoned drafts — no auto-purge (spec §14 / PRD §7.2).
+- [ ] **Delete** — user removes a load of any state (home-card **Delete icon** / detail, with confirm); local soft-delete → tombstone that syncs (spec §7). This is the only cleanup for abandoned drafts — no auto-purge (spec §14 / PRD §7.2).
 
 Screens (per spec §6.2 / [`wireframe.png`](./wireframe.png)):
 - [ ] **Home** cards — load name · shop name · status · **total item count** · **Duplicate + Delete** icons; `+` = new.
-- [ ] **Draft** — H1 name (pencil) → shop name → category list; per-row `– [n] +` + camera + delete; **Send (➤)** + **Save** icon.
+- [ ] **Draft** — H1 name (pencil) → shop name → category list; per-row `– [n] +` + camera (wired in M6) + delete; **Send (➤)** + **Save** icon.
 - [ ] **Sent** — read-only manifest + per-row **photo icon → Gallery**; editable **`send_date`** under shop name + **Save**; **✓ = start Receive**.
 - [ ] **Receive** ("Count your clothes") — number input + expected count + **Skip**.
 - [ ] **Closed** — per-category **Sent (hyperlink → Gallery)** vs **Received (`– [n] +`)** + totals + **Save**.
@@ -124,7 +125,7 @@ Screens (per spec §6.2 / [`wireframe.png`](./wireframe.png)):
 Tests:
 - [ ] Vitest on **local-domain logic over RxDB** (in-memory storage): send-freezes-manifest, receive match/mismatch/skip routing, duplicate (date-named, categories-only), manual `count_mode` takeover, custom-category add/remove.
 
-**Acceptance:** with **no server running**, a user can create (date-named, pre-seeded categories, add a custom one) → itemize → send → receive a matched load (closes), a mismatched load (check → closes), and a skipped-total load (check → closes) — all against local RxDB.
+**Acceptance:** with **no server running**, a user can create (date-named, pre-seeded categories, add a custom one) → itemize → send → receive a matched load (closes), a mismatched load (check → closes), and a skipped-total load (check → closes); **Duplicate** yields a new date-named draft with only the source's categories, and **Delete** removes a load — all against local RxDB.
 
 ---
 
@@ -148,7 +149,7 @@ Tests:
 ---
 
 ### M5 — Integrate Zitadel (passwordless)  ·  size **M**
-Replace the stub user with real sign-in delegated to Zitadel (PRD §4.1; spec §5.5–5.6). No auth UI or token issuance is built by us.
+Replace the stub user with real sign-in delegated to Zitadel (PRD §4.1; spec §5.5–5.6). No auth UI or token issuance is built by us. **Depends only on M1** (Zitadel + API up) — it can run in parallel with M2–M4; the single M2 touchpoint is the **`User` table** the upsert writes to.
 
 - [ ] Configure the Zitadel instance: a passwordless project with **email-OTP as the primary factor** and **JIT user creation** (no signup); Login V2 enabled (`LOGINV2_REQUIRED`).
 - [ ] Frontend: **OIDC Authorization Code + PKCE** client that redirects to **Login V2** for the email-code exchange, handles the callback, and persists tokens to survive offline (spec §9 tradeoff).
@@ -164,7 +165,7 @@ Tests:
 ---
 
 ### M6 — Photos, per-item groundwork & gallery  ·  size **M**
-Optional evidence capture + the `Photo`/`PhotoLink`/`LoadItem` groundwork (PRD §4.5; spec §4.1, §4.4, §8).
+Optional evidence capture + the `Photo`/`PhotoLink`/`LoadItem` groundwork (PRD §4.5; spec §4.1, §4.4, §8). **Depends on M4** — the photo docs replicate through `/sync` and the `/media` endpoint needs the server; user-scoped SAS hardens once **M5** lands (uses the stub user before then).
 
 - [ ] Client flow: create `photos` + `photo_links` (+ auto-created `load_items`) **docs in RxDB** (they sync via §7); call **`POST /media/upload-url`** → PUT bytes to Blob → set `blob_key` (syncs). `GET /media/{photo_id}` returns a read SAS; **Gallery screen** joins load → categories → items → photos (spec §5.2, §6.2).
 - [ ] Category photo **auto-creates a `LoadItem`** (name = category) and links it; **auto-mode count** increments on add / decrements on delete (floor 0), never once the category is manual (spec §4.4).
@@ -179,15 +180,14 @@ Optional evidence capture + the `Photo`/`PhotoLink`/`LoadItem` groundwork (PRD �
 
 ---
 
-### M7 — Duplicate & polish  ·  size **S–M**
-The "template" mechanic + hitting the usability targets (PRD §4.4; spec §5.3, §6.3).
+### M7 — Polish (UX & responsive)  ·  size **S–M**
+Hitting the usability targets + making the web app work on large screens (spec §6.3, §6.5). *(Duplicate itself is built in M3; the home-card Duplicate icon is wired there.)*
 
-- [ ] Duplicate action (home-card Duplicate icon + open load): **local-only** new `draft` carrying **categories only** (template + custom); `name` reset to the new date, counts/photos/shop/`count_mode` reset (spec §5.3). No endpoint — pure RxDB document creation, syncs like any other write.
 - [ ] Counter UX pass: large thumb-reachable tiles, single-tap increment with feedback, always-visible running total (PRD < 60s target).
 - [ ] **Responsive/desktop layout** (spec §6.5): centered fixed-width load screens, multi-column home grid, reflowed totals + Sent/Received columns on the Closed screen.
 - [ ] Empty states, error/toast states, sync-status affordance, install prompt.
 
-**Acceptance:** duplicating a load reproduces its category set and nothing else; a stopwatch test of create → itemize (6–10 items) → mark sent lands under the PRD's 60s target.
+**Acceptance:** a stopwatch test of create → itemize (6–10 items) → mark sent lands under the PRD's 60s target; load screens render correctly centered on desktop and as a card grid on the home list.
 
 ---
 
@@ -195,11 +195,12 @@ The "template" mechanic + hitting the usability targets (PRD §4.4; spec §5.3, 
 Prove the whole thing and ship it (spec §10.3, §11).
 
 - [ ] Playwright e2e (`clothesline-e2e`) against the Aspire graph (incl. real Zitadel core + Login V2), using pre-installed Chromium at `/opt/pw-browsers/chromium` (no `playwright install`):
-  - passwordless sign-in via Login V2 (OTP from Mailpit)
+  - passwordless sign-in via Login V2 (OTP from Mailpit); requests scoped to that user
   - create → itemize → send → receive **match**
   - create → send → receive **mismatch** → check-off → close
+  - create → send → receive **skip total** → per-category check → close
   - **offline** create+itemize+send+receive → reconnect → assert single server-side load
-  - duplicate (categories only) and photo attach (bundle + category via Azurite) → auto-creates a `LoadItem`, bumps the auto count, shows in the gallery
+  - duplicate (categories only) + delete; photo attach (bundle + category via Azurite) → auto-creates a `LoadItem`, bumps the auto count, shows in the gallery; a photo captured **offline is viewable offline** and uploads on reconnect
 - [ ] CI gate wired in order: lint/typecheck → pytest → Vitest → build containers → Playwright (spec §10.4).
 - [ ] **App-DB migration as a CI/CD step** (`alembic upgrade head` from `clothesline_db`), ordered before the api revision goes live (spec §11.2).
 - [ ] `azd up` — provision the **two ACA environments** (identity + application, spec §2.2): app env (web, api, Postgres #2, Blob) and identity env (Zitadel core + Login V2, App Gateway/Front Door path routing, Postgres #1); secrets via Key Vault.
