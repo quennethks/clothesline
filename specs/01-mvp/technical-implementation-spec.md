@@ -186,32 +186,59 @@ The same logical model exists on the client (IndexedDB) and server (Postgres). T
 | shop_location | text | free text in MVP |
 | send_date | date | |
 | status | enum | `draft` \| `sent` \| `closed` |
-| total_sent | int | denormalized sum of item counts, frozen at "send" |
+| total_sent | int | denormalized sum of category `count_sent`, frozen at "send" |
 | total_received | int? | entered at counter |
-| bundle_photo_id | uuid? | fk → Photo, the load thumbnail |
 | reconciled | bool | true once category check-off completed (optional) |
 | created_at / updated_at | timestamptz | `updated_at` drives sync conflict resolution |
 | deleted_at | timestamptz? | soft delete for sync |
 
-**LoadItem** — one row per category present on a load (PRD §3.3)
-| field | type | notes |
-|---|---|---|
-| id | uuid | pk, client-generated |
-| load_id | uuid | fk |
-| category | text | from the category catalog (§4.3) |
-| count_sent | int | the tap-counter value at send |
-| count_received | int? | filled only during a mismatch check-off |
-| photo_id | uuid? | optional per-category photo |
+> The load's thumbnail is no longer a dedicated column — it's the `is_primary` photo linked to the load (see `PhotoLink` below).
 
-**Photo** (PRD §3.5)
+**LoadItemCategory** — one row per clothing category present on a load (PRD §3.3). This is the tap-counter row (Shirts, Trousers, …); *renamed from the earlier `LoadItem`*.
 | field | type | notes |
 |---|---|---|
 | id | uuid | pk, client-generated |
-| load_id | uuid | fk |
-| kind | enum | `bundle` \| `category` |
+| load_id | uuid | fk → Load.id |
+| category | text | from the category catalog (§4.3) |
+| count_sent | int | the count at send; driven by tap or by photos (see §4.4) |
+| count_received | int? | received count for this category; **may be filled anytime** (drill-down detail), not only on a mismatch |
+| count_mode | enum | `auto` \| `manual` (default `auto`) — how `count_sent` is driven; see §4.4 |
+| created_at / updated_at | timestamptz | |
+| deleted_at | timestamptz? | soft delete for sync |
+
+**LoadItem** — an individual, specific item within a category (PRD §3.3 groundwork). Auto-created when a photo is captured; primarily just a name.
+| field | type | notes |
+|---|---|---|
+| id | uuid | pk, client-generated |
+| load_item_category_id | uuid | fk → LoadItemCategory.id |
+| name | text | defaults to the category name; user-renamable |
+| created_at / updated_at | timestamptz | |
+| deleted_at | timestamptz? | soft delete for sync |
+
+**Photo** — a standalone image record; attachment to an entity is expressed via `PhotoLink` (PRD §3.5)
+| field | type | notes |
+|---|---|---|
+| id | uuid | pk, client-generated |
 | blob_key | text | key in Blob Storage; null until upload completes |
 | local_only | bool | client-side flag: captured offline, not yet uploaded |
 | content_type | text | e.g. image/webp |
+| created_at / updated_at | timestamptz | |
+| deleted_at | timestamptz? | soft delete for sync |
+
+**PhotoLink** — junction linking a `Photo` to any entity it's attached to. Polymorphic and **many-to-many capable** by design (a photo can attach to several entities; an entity can hold several photos), so per-item photo galleries and richer attachments grow without a schema change.
+| field | type | notes |
+|---|---|---|
+| id | uuid | pk, client-generated |
+| photo_id | uuid | fk → Photo.id |
+| entity_type | enum | `load` \| `load_item_category` \| `load_item` |
+| entity_id | uuid | the attached entity's id (polymorphic — validity enforced in app/sync, not a DB FK) |
+| is_primary | bool | designates the entity's primary/thumbnail photo (e.g. the load's bundle photo) |
+| created_at / updated_at | timestamptz | |
+| deleted_at | timestamptz? | soft delete for sync |
+
+- **Indexes:** unique `(photo_id, entity_type, entity_id)` (no duplicate identical links); lookup `(entity_type, entity_id)` for "this entity's photos."
+- **MVP constraint (app-enforced, not schema):** **one photo per entity** for now — the junction stays M:N-capable so this can grow later without migration.
+- **Relationships:** `Load 1─* LoadItemCategory 1─* LoadItem`; `Photo *─< PhotoLink >─* (Load | LoadItemCategory | LoadItem)`.
 
 ### 4.2 Load state machine
 
@@ -240,6 +267,15 @@ Shirts, Trousers, Shorts, Underwear, Socks, Towels, Bedsheets, Jackets, Dresses,
 - Stored as a static config on the client; the server keeps the same list for validation.
 - **Custom categories are out of scope for Phase 1** (deferring O1's second half). Revisit if user testing shows the fixed list is a blocker.
 
+### 4.4 Count modes (auto / manual)
+
+A category's `count_sent` can be driven two ways, tracked **per category** by `count_mode` (default `auto`):
+
+- **Auto mode** — `count_sent` is driven by photos: capturing a photo for that category **creates a `LoadItem` and increments `count_sent` by 1**; deleting that photo/item **decrements `count_sent` by 1** (floored at 0). This lets a user itemize purely by photographing pieces.
+- **Manual takeover** — the **first** time the user taps the +/- counter or types a number for that category, `count_mode` flips to `manual` and `count_sent` becomes the user's value. **This is permanent for that category** (one-way, sticky): from then on, capturing or deleting photos still creates/removes `LoadItem`s but **never changes `count_sent`**.
+
+So auto and manual are mutually exclusive per category, and manual always wins once engaged. `LoadItem`s are created in both modes (they carry the photos); they only *drive the count* while the category is still in `auto`.
+
 ---
 
 ## 5. Backend design (`src/backend/clothesline_api`)
@@ -249,7 +285,7 @@ Shirts, Trousers, Shorts, Underwear, Socks, Towels, Bedsheets, Jackets, Dresses,
 ```
 src/backend/
 ├── clothesline_db/            shared data package (uv workspace member)
-│   ├── models/                all SQLAlchemy models: User, Load, LoadItem, Photo
+│   ├── models/                all SQLAlchemy models: User, Load, LoadItemCategory, LoadItem, Photo, PhotoLink
 │   ├── migrations/            Alembic env + versioned scripts
 │   └── session.py             engine/session factory
 └── clothesline_api/           FastAPI app (imports clothesline_db)
@@ -289,8 +325,10 @@ All endpoints require a valid **Zitadel-issued access token** (bearer JWT), vali
 **Media (PRD §3.5)**
 | method | path | purpose |
 |---|---|---|
-| POST | `/loads/{id}/photos` | register a photo, returns a **pre-signed Blob upload URL**; client uploads bytes directly to Blob. |
-| GET | `/loads/{id}/photos/{pid}` | returns a short-lived read SAS URL. |
+| POST | `/loads/{id}/photos` | register a photo for an entity (`{entity_type, entity_id}`), returns a **pre-signed Blob upload URL**; creates the `Photo` + `PhotoLink`. For a category photo it **auto-creates a `LoadItem`** (name = category) and links to it (§4.4). |
+| GET | `/loads/{id}/photos` | gallery: all photos linked to the load and its categories/items (read SAS URLs). |
+| GET | `/loads/{id}/photos/{pid}` | returns a short-lived read SAS URL for one photo. |
+| DELETE | `/loads/{id}/photos/{pid}` | soft-delete the photo + its links; in `auto` mode this also decrements the category count (§4.4). |
 
 **Sync (offline, §7)**
 | method | path | purpose |
@@ -299,11 +337,11 @@ All endpoints require a valid **Zitadel-issued access token** (bearer JWT), vali
 
 ### 5.3 Duplicate semantics (PRD §3.4)
 
-Duplicating produces a **new `draft` load** that copies only the **set of categories** present on the source (i.e. `LoadItem.category` values). Everything else resets:
+Duplicating produces a **new `draft` load** that copies only the **set of categories** present on the source (i.e. the `LoadItemCategory.category` values). Everything else resets:
 - new `id`, new `created_at`
 - `shop_name`, `shop_location`, `send_date` cleared
-- all `count_sent` / `count_received` = 0
-- **no photos copied**, `bundle_photo_id` null
+- all `count_sent` / `count_received` = 0, `count_mode` back to `auto`
+- **no photos, no `LoadItem`s, no links copied**
 
 Because a duplicate is just a normal `draft` load, duplication can be performed **entirely client-side offline** (create a new local load pre-seeded with the source's categories); the `/duplicate` endpoint exists mainly for the online path and cross-device parity.
 
@@ -363,13 +401,14 @@ Sources: [ACA — transport protocols](https://learn.microsoft.com/azure/contain
 | Screen | PRD ref | Notes |
 |---|---|---|
 | Sign in | §3.1 | email-only start → **OIDC redirect to Zitadel Login V2** for the email-code exchange; OIDC callback handler completes sign-in and stores tokens. |
-| Home / load list | §3.2 | list of loads with bundle-photo thumbnail + status chip; "New load" and per-load "⋮ → Duplicate". |
+| Home / load list | §3.2 | list of loads with the load's primary (`is_primary`) photo as thumbnail + status chip; "New load" and per-load "⋮ → Duplicate". |
 | Create / edit load | §3.2–3.3 | shop, location, date + the tap-counter grid. |
-| Tap counter | §3.3 | category grid; each tile increments on tap; running total pinned. |
+| Tap counter | §3.3 | category grid; each tile increments on tap; running total pinned. A category in `auto` mode may be photo-driven until first manual tap (§4.4). |
 | Load detail | §3.6 | manifest summary; "Mark sent". |
 | Receive | §3.7 | single number input → match (celebrate + close) or mismatch → check-off. |
 | Category check-off | §3.7/§3.8 | per-category received counts; used for mismatch (required) and home reconcile (optional). |
-| Photo capture | §3.5 | camera/file input for bundle + per-category photos. |
+| Photo capture | §3.5 | camera/file input for the bundle photo and per-category photos; a category photo **auto-creates a `LoadItem`** and links it (§4.4). |
+| Gallery | §3.5 | grid of all `LoadItem`/photo records for a load (join Load → categories → items → photos); the only per-item surface in the Phase-1 UI. |
 
 ### 6.3 Counter UX (the make-or-break number)
 
@@ -382,7 +421,7 @@ PRD success metric is **< 60s to itemize**. Design implications:
 
 - Service worker precaches the app shell + category catalog → app opens with no network.
 - All mutations (create, itemize, send, receive, reconcile, duplicate) write to IndexedDB synchronously and enqueue a sync op.
-- Photos captured offline are stored as blobs in IndexedDB with `local_only = true`, uploaded on reconnect.
+- Photos captured offline are stored as blobs in IndexedDB with `local_only = true`; the `Photo`, its `PhotoLink`, and the auto-created `LoadItem` are created locally and uploaded/synced on reconnect.
 - A subtle sync indicator shows pending/failed sync; it never blocks the core flow.
 - **Auth is online-only by nature** (sign-in requires reaching Zitadel), but once tokens are stored the core counter flow runs fully offline; tokens refresh on reconnect.
 
@@ -392,7 +431,7 @@ PRD success metric is **< 60s to itemize**. Design implications:
 
 **Model:** offline-first with a queue and last-writer-wins per record, made safe by client-generated ids.
 
-1. **Client-generated UUIDs** for Load / LoadItem / Photo eliminate create-time id collisions — an offline create is a first-class record, not a temp placeholder.
+1. **Client-generated UUIDs** for Load / LoadItemCategory / LoadItem / Photo / PhotoLink eliminate create-time id collisions — every offline create (including auto-created items and photo links) is a first-class record, not a temp placeholder.
 2. **Mutation queue**: each local change appends an op `{entity, id, op, payload, updated_at}` to an outbox in IndexedDB.
 3. **Push**: `POST /sync` sends the outbox; server applies ops idempotently (upsert by id).
 4. **Pull**: same call returns server changes since the client's `cursor` (a monotonic version/timestamp). Client merges.
@@ -403,8 +442,8 @@ PRD success metric is **< 60s to itemize**. Design implications:
 
 ## 8. Photo storage
 
-- Bytes live in **Azure Blob Storage**; the DB stores only `blob_key` + metadata.
-- Upload path: client asks API for a **pre-signed (SAS) upload URL** → PUTs bytes directly to Blob → confirms to API. Keeps large payloads off the API container.
+- Bytes live in **Azure Blob Storage**; the DB stores only the `Photo` (`blob_key` + metadata) and its `PhotoLink`(s) — never image bytes.
+- Upload path: client asks API for a **pre-signed (SAS) upload URL** → PUTs bytes directly to Blob → confirms to API. Keeps large payloads off the API container. A category photo also yields an auto-created `LoadItem` + `PhotoLink` (§4.4).
 - Read path: API returns short-lived read SAS URLs (or proxies) so blobs aren't public.
 - Images are compressed client-side (target WebP) before upload to respect mobile data.
 - **Local dev** uses **Azurite** (Blob emulator) wired by Aspire, so no cloud account is needed to develop the photo flow.
@@ -425,7 +464,7 @@ PRD success metric is **< 60s to itemize**. Design implications:
 ## 10. Testing strategy
 
 ### 10.1 Backend unit/integration (`clothesline_tests`, pytest)
-- **Unit**: domain services (reconcile match/mismatch/surplus, duplicate semantics, send-freezes-manifest, sync merge/LWW) tested without HTTP.
+- **Unit**: domain services (reconcile match/mismatch/surplus, duplicate semantics, send-freezes-manifest, **count-mode auto→manual transitions incl. photo-add increment / delete decrement / manual stickiness — §4.4**, sync merge/LWW) tested without HTTP.
 - **Integration**: FastAPI `TestClient` against a **throwaway Postgres built from the `clothesline_db` migration project** (exercising the real Alembic path), covering the loads lifecycle, `/sync` idempotency, and the user upsert. Auth is stubbed with a **lightweight OIDC mock** (e.g. `mock-oauth2-server`) that issues test JWTs the API validates against the mock's JWKS — no real Zitadel needed for fast tests.
 - Run via `uv run pytest`.
 
@@ -440,7 +479,7 @@ PRD success metric is **< 60s to itemize**. Design implications:
   - Create → send → receive **mismatch** → category check-off → close.
   - Duplicate a load → verify only categories carry over, counts/photos/shop reset.
   - **Offline path**: Playwright signs in online, then toggles offline context, performs create+itemize+send+receive fully offline, then goes online and asserts the load syncs to the API.
-  - Photo attach (bundle + per-category) via file input against Azurite.
+  - Photo attach (bundle + per-category) via file input against Azurite → auto-creates a `LoadItem`, appears in the **gallery**; in `auto` mode a category photo bumps the count, delete decrements it (§4.4).
 - Playwright is browser-driven; use the pre-installed Chromium (`/opt/pw-browsers/chromium`) — do not run `playwright install`.
 
 ### 10.4 CI gate
@@ -490,9 +529,9 @@ If two environments prove more cost than the MVP justifies, Zitadel core + Login
 |---|---|---|
 | 3.1 | Passwordless email auth | **Zitadel** (Login V2, email-OTP, JIT user); API validates JWTs via JWKS; Mailpit locally (§5.5–5.6) |
 | 3.2 | Create a load | `loads/`; `POST /loads`; create/edit screen |
-| 3.3 | Itemize tap-counter | `LoadItem`; tap-counter screen (§6.3) |
+| 3.3 | Itemize tap-counter | `LoadItemCategory` (category + `count_sent`); auto/manual `count_mode` (§4.4); tap-counter screen (§6.3) |
 | 3.4 | Duplicate load | `/duplicate` + client-side duplicate (§5.3) |
-| 3.5 | Photos (optional) | `media/`; Blob + Azurite; pre-signed upload (§8) |
+| 3.5 | Photos (optional) | `Photo` + `PhotoLink` junction; auto-created `LoadItem` + gallery; Blob + Azurite; pre-signed upload (§4.1, §8) |
 | 3.6 | Send | `/loads/{id}/send` freezes `total_sent` (§4.2) |
 | 3.7 | Receive & reconcile | `/receive` + `/reconcile`; match/mismatch (§5.4) |
 | 3.8 | Home reconcile (optional) | `/reconcile` on closed load; `reconciled` flag |
@@ -511,3 +550,5 @@ If two environments prove more cost than the MVP justifies, Zitadel core + Login
 | O4 received > sent | Handled as **surplus** (positive delta), no blocking (§5.4) |
 | O5 multiple open loads same shop | Allowed; loads are independent records, disambiguated by date + thumbnail in the list |
 | O6 reconcile reminder | Out of scope Phase 1 (PRD backlog); no notification infra built |
+
+**Per-item model is forward-looking groundwork.** The `LoadItem` entity and the `PhotoLink` junction (§4.1) are modelled now so the schema can carry per-item detail and multi-entity/multi-photo attachments across later phases. In the **Phase-1 UI**, per-item surface is intentionally minimal: items are **auto-created on photo capture** (name = category) and viewed only through the **gallery** (§6.2) — there is no per-item editing/rename UI yet, and photos are limited to **one per entity** (§4.1). The data model accommodates the growth; the UI does not build it.

@@ -86,7 +86,8 @@ The single most important early milestone: prove the topology (spec §2.1), incl
 ### M2 — Data model & migrations (`clothesline_db`)  ·  size **M**
 Persistence for the domain, in the shared data package (spec §3, §4, §5.1).
 
-- [ ] Create the **`clothesline_db`** package (uv workspace member): SQLAlchemy 2.x async models `User {id, sub, email}`, `Load`, `LoadItem`, `Photo` (spec §4.1), with `updated_at`/`deleted_at` for sync.
+- [ ] Create the **`clothesline_db`** package (uv workspace member): SQLAlchemy 2.x async models `User {id, sub, email}`, `Load`, `LoadItemCategory` (with `count_mode`), `LoadItem`, `Photo`, `PhotoLink` (spec §4.1), with `updated_at`/`deleted_at` for sync.
+- [ ] `PhotoLink` polymorphic junction (`entity_type`/`entity_id`, `is_primary`) with unique `(photo_id, entity_type, entity_id)` + lookup `(entity_type, entity_id)` indexes (spec §4.1).
 - [ ] Alembic migration project **inside `clothesline_db`**; initial migration creates the schema. (Execution is a pipeline step, not an ACA job — spec §11.2.)
 - [ ] Client-generated UUID PKs accepted on write (spec §7).
 - [ ] Static category catalog (spec §4.3) shared as config on server (validation) and client (offline seed).
@@ -107,13 +108,15 @@ Backend:
 - [ ] `POST /loads/{id}/reconcile` — per-category check-off; closes load.
 - [ ] All queries scoped to `user_id` (use a stub user until M5).
 
+- [ ] `LoadItemCategory` count in **manual mode** via tap/number entry; first manual interaction flips `count_mode = manual` permanently (spec §4.4). (Auto/photo-driven mode lands in M6.)
+
 Frontend:
 - [ ] Home / load list; create-load screen; **tap-counter** grid (spec §6.2).
 - [ ] Load detail + "Mark sent"; receive screen (single number) → match celebration / mismatch check-off.
 - [ ] Category check-off screen (shared by mismatch + optional home reconcile).
 
 Tests:
-- [ ] pytest for the reconcile/send/duplicate service logic (match, mismatch, surplus, freeze-on-send).
+- [ ] pytest for the reconcile/send/duplicate service logic (match, mismatch, surplus, freeze-on-send) and manual `count_mode` takeover.
 - [ ] Vitest for tap-counter increment/decrement + running total, and the mismatch → check-off branch.
 
 **Acceptance:** online, a user can create → itemize → send → receive a matched load (closes) and a mismatched load (check-off → closes); Playwright smoke covers both.
@@ -153,15 +156,16 @@ Tests:
 
 ---
 
-### M6 — Photos  ·  size **M**
-Optional evidence capture (spec §3.5 PRD, §8).
+### M6 — Photos, per-item groundwork & gallery  ·  size **M**
+Optional evidence capture + the `Photo`/`PhotoLink`/`LoadItem` groundwork (spec §3.5 PRD, §4.1, §4.4, §8).
 
-- [ ] `POST /loads/{id}/photos` → returns pre-signed Blob **upload** URL; `GET …/{pid}` → short-lived read SAS.
-- [ ] Client compresses to WebP, uploads bytes directly to Blob (Azurite locally).
-- [ ] Bundle photo doubles as load thumbnail; per-category photos on the counter/check-off tiles.
-- [ ] Offline capture: store bytes in IndexedDB with `local_only`, upload on reconnect (metadata rides `/sync`, bytes go out-of-band).
+- [ ] `POST /loads/{id}/photos` (`{entity_type, entity_id}`) → creates `Photo` + `PhotoLink`, returns pre-signed Blob **upload** URL; `GET /loads/{id}/photos` gallery list; `GET …/{pid}` read SAS; `DELETE …/{pid}` soft-deletes photo + links.
+- [ ] Category photo **auto-creates a `LoadItem`** (name = category) and links it; **auto-mode count** increments on add / decrements on delete (floor 0), never once the category is manual (spec §4.4).
+- [ ] Client compresses to WebP, uploads bytes directly to Blob (Azurite locally); **one photo per entity** enforced app-side (junction stays M:N-capable).
+- [ ] Load thumbnail = the `is_primary` load-linked photo; **Gallery screen** lists all item photos for a load (spec §6.2).
+- [ ] Offline capture: store bytes in IndexedDB with `local_only`; `Photo` + `PhotoLink` + auto-created `LoadItem` ride `/sync`, bytes go out-of-band on reconnect.
 
-**Acceptance:** attach a bundle + a category photo online and offline-then-synced; thumbnail renders in the load list; blobs are SAS-gated (not public).
+**Acceptance:** attach a bundle + a category photo online and offline-then-synced; the category photo creates a `LoadItem`, bumps the auto count (and delete decrements it), appears in the gallery; the `is_primary` photo renders as the load thumbnail; blobs are SAS-gated (not public).
 
 ---
 
@@ -184,7 +188,7 @@ Prove the whole thing and ship it (spec §10.3, §11).
   - create → itemize → send → receive **match**
   - create → send → receive **mismatch** → check-off → close
   - **offline** create+itemize+send+receive → reconnect → assert single server-side load
-  - duplicate (categories only) and photo attach (bundle + category via Azurite)
+  - duplicate (categories only) and photo attach (bundle + category via Azurite) → auto-creates a `LoadItem`, bumps the auto count, shows in the gallery
 - [ ] CI gate wired in order: lint/typecheck → pytest → Vitest → build containers → Playwright (spec §10.4).
 - [ ] **App-DB migration as a CI/CD step** (`alembic upgrade head` from `clothesline_db`), ordered before the api revision goes live (spec §11.2).
 - [ ] `azd up` — provision the **two ACA environments** (identity + application, spec §2.2): app env (web, api, Postgres #2, Blob) and identity env (Zitadel core + Login V2, App Gateway/Front Door path routing, Postgres #1); secrets via Key Vault.
