@@ -106,7 +106,7 @@ Client store:
 - [ ] Set up **RxDB** (IndexedDB storage) with the five **collections** + `jsonSchema` derived from spec §4.1: `loads`, `load_item_categories`, `load_items`, `photos`, `photo_links` (client-generated UUID PKs, `updated_at`, `_deleted`).
 
 Flows (all local writes, business logic client-side):
-- [ ] **Create** — new `loads` doc (`name` = today's date, optional shop fields) + **pre-seeded template `load_item_categories`** (spec §4.3); add-custom-category (free text) + remove-category.
+- [ ] **Create** — new `loads` doc (`name` = today's date, **shop name only** on screen) + **pre-seeded template `load_item_categories`** (spec §4.3); add-custom-category (free text) + remove-category. `send_date` is set/editable on the Sent screen.
 - [ ] **Itemize** — tap-counter in **manual mode**; first tap/number-entry flips `count_mode = manual` permanently (spec §4.4). (Auto/photo-driven counting lands in M6.)
 - [ ] **Send** — set `status = sent`, freeze `total_sent`; sent manifest becomes read-only in the UI.
 - [ ] **Receive** — number entry **or Skip**: match → `closed`; mismatch/skip → per-category check; **surplus** allowed (spec §5.4).
@@ -114,7 +114,12 @@ Flows (all local writes, business logic client-side):
 - [ ] **Duplicate** — new date-named draft carrying the source's category set only (spec §5.3).
 - [ ] **Delete** — user removes a load of any state (list ⋮ / detail, with confirm); local soft-delete → tombstone that syncs (spec §7). This is the only cleanup for abandoned drafts — no auto-purge (spec §14 / PRD §7.2).
 
-Screens: home/load list (⋮ → Duplicate / Delete), create/edit (**H1 name → optional shop fields → category list**), tap-counter, load detail + "Mark sent", receive (number/Skip), category check-off (spec §6.2).
+Screens (per spec §6.2 / [`wireframe.png`](./wireframe.png)):
+- [ ] **Home** cards — load name · shop name · status · **total item count** · **Duplicate + Delete** icons; `+` = new.
+- [ ] **Draft** — H1 name (pencil) → shop name → category list; per-row `– [n] +` + camera + delete; **Send (➤)** + **Save** icon.
+- [ ] **Sent** — read-only manifest + per-row **photo icon → Gallery**; editable **`send_date`** under shop name + **Save**; **✓ = start Receive**.
+- [ ] **Receive** ("Count your clothes") — number input + expected count + **Skip**.
+- [ ] **Closed** — per-category **Sent (hyperlink → Gallery)** vs **Received (`– [n] +`)** + totals + **Save**.
 
 Tests:
 - [ ] Vitest on **local-domain logic over RxDB** (in-memory storage): send-freezes-manifest, receive match/mismatch/skip routing, duplicate (date-named, categories-only), manual `count_mode` takeover, custom-category add/remove.
@@ -165,6 +170,7 @@ Optional evidence capture + the `Photo`/`PhotoLink`/`LoadItem` groundwork (PRD �
 - [ ] Category photo **auto-creates a `LoadItem`** (name = category) and links it; **auto-mode count** increments on add / decrements on delete (floor 0), never once the category is manual (spec §4.4).
 - [ ] Client compresses to WebP; **one photo per entity** enforced app-side (junction stays M:N-capable).
 - [ ] Load thumbnail = the `is_primary` load-linked photo.
+- [ ] **Gallery entry points**: per-row **photo icon** (Draft/Sent) and the **hyperlinked Sent numbers** on the Closed screen both open the Gallery (spec §6.2).
 - [ ] Offline capture: bytes stashed locally with the client-only `local_only` flag; the `photos`/`photo_links`/`load_items` **docs** replicate immediately, bytes upload via `/media` on reconnect.
 
 **Acceptance:** attach a bundle + a category photo online and offline-then-synced; the category photo creates a `LoadItem`, bumps the auto count (and delete decrements it), appears in the gallery; the `is_primary` photo renders as the load thumbnail; blobs are SAS-gated (not public).
@@ -174,8 +180,9 @@ Optional evidence capture + the `Photo`/`PhotoLink`/`LoadItem` groundwork (PRD �
 ### M7 — Duplicate & polish  ·  size **S–M**
 The "template" mechanic + hitting the usability targets (PRD §4.4; spec §5.3, §6.3).
 
-- [ ] Duplicate action (home list ⋮ + open load): **local-only** new `draft` carrying **categories only** (template + custom); `name` reset to the new date, counts/photos/shop/location/`count_mode` reset (spec §5.3). No endpoint — pure RxDB document creation, syncs like any other write.
+- [ ] Duplicate action (home-card Duplicate icon + open load): **local-only** new `draft` carrying **categories only** (template + custom); `name` reset to the new date, counts/photos/shop/`count_mode` reset (spec §5.3). No endpoint — pure RxDB document creation, syncs like any other write.
 - [ ] Counter UX pass: large thumb-reachable tiles, single-tap increment with feedback, always-visible running total (PRD < 60s target).
+- [ ] **Responsive/desktop layout** (spec §6.5): centered fixed-width load screens, multi-column home grid, reflowed totals + Sent/Received columns on the Closed screen.
 - [ ] Empty states, error/toast states, sync-status affordance, install prompt.
 
 **Acceptance:** duplicating a load reproduces its category set and nothing else; a stopwatch test of create → itemize (6–10 items) → mark sent lands under the PRD's 60s target.

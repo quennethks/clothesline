@@ -427,17 +427,20 @@ Sources: [ACA — transport protocols](https://learn.microsoft.com/azure/contain
 
 ### 6.2 Screens
 
+These screens are based on the mobile + desktop wireframes in [`wireframe.png`](./wireframe.png). On-screen a load captures **shop name only** — the model's `shop_location` exists but is **not surfaced** in the Phase-1 UI. Desktop/responsive behaviour is in §6.5.
+
 | Screen | PRD ref | Notes |
 |---|---|---|
-| Sign in | §4.1 | email-only start → **OIDC redirect to Zitadel Login V2** for the email-code exchange; OIDC callback handler completes sign-in and stores tokens. |
-| Home / load list | §4.2 | list of loads with the load's primary (`is_primary`) photo as thumbnail + status chip; "New load" and per-load "⋮ → Duplicate / Delete". **Delete** (any state, with confirm) is a local soft-delete that syncs as a tombstone (§7) — this is how an abandoned draft is removed (§14 / PRD §7.2). |
-| Create / edit load | §4.2–4.3 | **H1 = load name** (defaults to today's date, editable) → **shop name + shop location (optional, recommended)** → the laundry list of pre-seeded categories. Add-custom-category free-text field; remove-category control. |
-| Tap counter | §4.3 | category grid; each tile increments on tap; running total pinned. A category in `auto` mode may be photo-driven until first manual tap (§4.4). |
-| Load detail | §4.6 | read-only sent manifest summary; "Mark sent" (top-right). |
-| Receive | §4.7 | prominent Receive action → total-received number input **or Skip**; match → celebrate + close; mismatch or skip → per-category check. |
-| Category check-off | §4.7/§4.8 | per-category **receive-side add/minus counter** (edits `count_received` only, sent tally read-only); used for mismatch/skip (to close) and optional home double-check on sent/closed loads. |
-| Photo capture | §4.5 | camera button per category (+ bundle photo); a category photo **auto-creates a `LoadItem`** and links it (§4.4). |
-| Gallery | §4.5 | grid of all `LoadItem`/photo records for a load (join Load → categories → items → photos); the only per-item surface in the Phase-1 UI. |
+| Sign in | §4.1 | email-only start → **OIDC redirect to Zitadel Login V2**; the callback handler completes sign-in and stores tokens. |
+| Home / load list | §4.2 | one card per load: **load name · shop name · status · total item count**, plus a **Duplicate** icon and a **Delete** icon (Delete = confirm → local soft-delete/tombstone, §7; the only cleanup for abandoned drafts, §14 / PRD §7.2). `+` (top-right) creates a new load. The load's bundle photo (PRD §4.5) serves as the card avatar when present. Desktop: multi-column card grid (§6.5). |
+| Load — Draft | §4.2–4.3 | one screen = create + itemize. Editable **name** (pencil; defaults to today's date), **shop name**, `ITEMS +` to add a custom category; each row = `– [count] +` counter + **camera** (capture → auto-creates a `LoadItem`, §4.4) + **delete** (remove category); running **total**; **Send (➤)** and a **Save** icon (top-right). |
+| Load — Sent | §4.6 | read-only **manifest** (per-category counts, non-editable) with a per-row **photo icon → Gallery**. Header shows shop name and an **editable `send_date`** (defaults to today) just below it, with a **Save** icon. The **✓ (top-right) starts Receive** → "Count your clothes". |
+| Receive — "Count your clothes" | §4.7 | prompt + one large **number input** for total received; shows **expected count** (= `total_sent`); **Skip**. Match → close; mismatch or skip → the Closed screen's per-category check. |
+| Load — Closed | §4.7/§4.8 | per category: **Sent** count rendered as a **hyperlink → Gallery**, vs **Received** (`– [count] +` counter that edits `count_received` only — sent tally stays read-only); **totals** for sent and received; **Save** icon. Reopenable anytime for the receive-side double-check. |
+| Gallery | §4.5 | standard responsive photo grid (tap-to-enlarge) of the load's photos; reached from the row **photo icons** (Draft/Sent) and the hyperlinked **Sent numbers** (Closed). |
+| Photo capture | §4.5 | standard camera/file capture with preview + confirm; on confirm writes the `Photo`/`PhotoLink`/`LoadItem` docs and stages bytes for upload (§8). |
+
+- The **Save** icon appears on every screen with editable fields (Draft, Sent, Closed) as a commit/done-editing affordance; writes are already durable locally via RxDB (§7).
 
 ### 6.3 Counter UX (the make-or-break number)
 
@@ -453,6 +456,14 @@ PRD success metric is **< 60s to itemize**. Design implications:
 - Photos captured offline: the `Photo`, its `PhotoLink`, and the auto-created `LoadItem` are written to RxDB immediately; the image **bytes** are stashed locally with the client-only `local_only` flag and uploaded via `/media/upload-url` on reconnect (then `blob_key` is set, which syncs).
 - A subtle sync indicator reflects RxDB replication state (active/pending/error); it never blocks the core flow.
 - **Auth is online-only by nature** (sign-in requires reaching Zitadel), but once tokens are stored the core counter flow runs fully offline; tokens refresh on reconnect.
+
+### 6.5 Responsive / desktop layout
+
+Clothesline is a **web app**, so it must be usable on large screens as well as phones. (This refinement is captured here in the spec; it is **not** in the PRD.) Layouts derive from [`wireframe.png`](./wireframe.png).
+
+- **Mobile:** single-column, thumb-reachable; the counter step is one screen (§6.3).
+- **Desktop:** load screens render **centered at a fixed max-width** rather than full-bleed; the **home list becomes a multi-column card grid**.
+- **Reflowed elements (not just centered):** some screens rearrange on desktop — e.g. the running **total moves to a centered header**, and the **Closed** screen lays **Sent** and **Received** out as **side-by-side columns** (total sent above, total received below), per the wireframe.
 
 ---
 
