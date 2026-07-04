@@ -516,7 +516,7 @@ Two flags bridge them:
 - **Bytes not local** (captured on another of the user's devices, or evicted from cache) → **lazy cache-on-view**: when online, opening the photo calls **`GET /media/{photo_id}`** → read SAS URL → fetches bytes from Blob → **caches them locally**, so it's viewable offline thereafter. A photo **never opened while online** shows a **"connect to view"** placeholder when offline.
 - **Pending state:** a synced `photos` doc can arrive with `blob_key = null` (the capturer hasn't drained its upload queue yet). Viewers show a **pending/placeholder** until `blob_key` fills in.
 
-The local byte cache is **LRU-evictable** under storage pressure; an evicted photo simply falls back to lazy re-fetch. **Deferred (not Phase 1):** *eager prefetch* — a download queue that proactively pulls every new photo's bytes after each sync for full offline mirroring; it's the same pattern turned up, but costs bandwidth/storage that photo-heavy users rarely need. MVP uses **lazy cache-on-view**.
+Under storage pressure the local byte cache is trimmed **least-recently-used first** — the oldest-viewed photos are dropped before recently-viewed ones — and an evicted photo simply falls back to lazy re-fetch. **Only uploaded bytes are ever evicted:** a photo still marked `local_only = true` (captured offline, not yet in Blob) is the *only* copy, so it is **never** evicted until the upload queue has drained it. **Deferred (not Phase 1):** *eager prefetch* — a download queue that proactively pulls every new photo's bytes after each sync for full offline mirroring; it's the same pattern turned up, but costs bandwidth/storage that photo-heavy users rarely need. MVP uses **lazy cache-on-view**.
 
 ### 8.4 Access & security
 
