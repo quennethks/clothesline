@@ -4,8 +4,6 @@
   "features": {
     "ghcr.io/devcontainers/features/docker-in-docker:2": {},
     "ghcr.io/devcontainers/features/dotnet:2": {
-      "version": "9.0",
-      "aspNetCoreVersion": "9.0"
     },
     "ghcr.io/devcontainers/features/python:1": {
       "version": "3.12"
@@ -15,7 +13,7 @@
     },
     "ghcr.io/va-h/devcontainers-features/uv:1": {}
   },
-  "postCreateCommand": "dotnet workload install aspire || { echo 'ERROR: Failed to install Aspire workload. Run: dotnet workload install aspire'; exit 1; }",
+  "postCreateCommand": "(dotnet tool install -g Aspire.Cli) || { echo 'ERROR: Failed to install Aspire workload. Run: dotnet workload install aspire'; exit 1; }",
   "customizations": {
     "vscode": {
       "extensions": [
@@ -24,7 +22,8 @@
         "ms-dotnettools.csdevkit",
         "dbaeumer.vscode-eslint",
         "esbenp.prettier-vscode",
-        "ms-playwright.playwright"
+        "ms-playwright.playwright",
+        "anthropic.claude-code"
       ]
     }
   },
