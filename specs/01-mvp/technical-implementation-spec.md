@@ -430,7 +430,7 @@ Sources: [ACA — transport protocols](https://learn.microsoft.com/azure/contain
 | Screen | PRD ref | Notes |
 |---|---|---|
 | Sign in | §4.1 | email-only start → **OIDC redirect to Zitadel Login V2** for the email-code exchange; OIDC callback handler completes sign-in and stores tokens. |
-| Home / load list | §4.2 | list of loads with the load's primary (`is_primary`) photo as thumbnail + status chip; "New load" and per-load "⋮ → Duplicate". |
+| Home / load list | §4.2 | list of loads with the load's primary (`is_primary`) photo as thumbnail + status chip; "New load" and per-load "⋮ → Duplicate / Delete". **Delete** (any state, with confirm) is a local soft-delete that syncs as a tombstone (§7) — this is how an abandoned draft is removed (§14 / PRD §7.2). |
 | Create / edit load | §4.2–4.3 | **H1 = load name** (defaults to today's date, editable) → **shop name + shop location (optional, recommended)** → the laundry list of pre-seeded categories. Add-custom-category free-text field; remove-category control. |
 | Tap counter | §4.3 | category grid; each tile increments on tap; running total pinned. A category in `auto` mode may be photo-driven until first manual tap (§4.4). |
 | Load detail | §4.6 | read-only sent manifest summary; "Mark sent" (top-right). |
@@ -577,7 +577,7 @@ If two environments prove more cost than the MVP justifies, Zitadel core + Login
 | PRD Q (§7) | Decision in this spec |
 |---|---|
 | §7.1 categories / custom reuse | Pre-seeded template + **custom free-text allowed** (§4.3). Custom categories are **one-load-only**; reuse is via Duplicate. A saved/personal category list is **deferred** to a later phase |
-| §7.2 draft/counting lifecycle | Explicit `draft` ("Draft / Counting") state exists (§4.2); **abandoned-draft cleanup** (auto-save vs. discard vs. archive) is **unresolved** for Phase 1 — no purge rule built |
+| §7.2 draft/counting lifecycle | **Resolved:** abandoned drafts simply **persist** — no automatic system cleanup. The **user can manually delete** any load (soft-delete → tombstone that syncs, §6.2/§7). Automatic purge/archival of stale drafts is **backlog**, not Phase 1 |
 | §7.3 data retention | Not implemented in Phase 1; no auto-purge. Flag storage growth for photos — revisit before GA |
 | §7.4 received > sent | Handled as **surplus** (positive delta), no blocking (§5.4) |
 | §7.5 multiple open loads same shop | Allowed; loads are independent records, disambiguated by name/date + thumbnail in the list |

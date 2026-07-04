@@ -112,8 +112,9 @@ Flows (all local writes, business logic client-side):
 - [ ] **Receive** — number entry **or Skip**: match → `closed`; mismatch/skip → per-category check; **surplus** allowed (spec §5.4).
 - [ ] **Reconcile** — receive-side add/minus counter writes `count_received` only; closes the load.
 - [ ] **Duplicate** — new date-named draft carrying the source's category set only (spec §5.3).
+- [ ] **Delete** — user removes a load of any state (list ⋮ / detail, with confirm); local soft-delete → tombstone that syncs (spec §7). This is the only cleanup for abandoned drafts — no auto-purge (spec §14 / PRD §7.2).
 
-Screens: home/load list, create/edit (**H1 name → optional shop fields → category list**), tap-counter, load detail + "Mark sent", receive (number/Skip), category check-off (spec §6.2).
+Screens: home/load list (⋮ → Duplicate / Delete), create/edit (**H1 name → optional shop fields → category list**), tap-counter, load detail + "Mark sent", receive (number/Skip), category check-off (spec §6.2).
 
 Tests:
 - [ ] Vitest on **local-domain logic over RxDB** (in-memory storage): send-freezes-manifest, receive match/mismatch/skip routing, duplicate (date-named, categories-only), manual `count_mode` takeover, custom-category add/remove.
