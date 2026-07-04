@@ -113,7 +113,8 @@ flowchart TD
 - This becomes the load's header record.
 
 ### 4.3 Itemize (Category Tap-Counter)
-- Predefined clothing categories (e.g., Shirts, Trousers, Socks, Underwear, Towels, etc.).
+- Each new load opens with a pre-filled set of common clothing categories (e.g., Shirts, Trousers, Socks, Underwear, Towels, etc.).
+- User can add a custom category via a free-text field when the default set doesn't cover what's in the load.
 - Tapping a category increments its count by one (tap-tap-tap = 3).
 - A running total across all categories is shown as the load's manifest summary (e.g., "Shirts: 6, Trousers: 2, Socks: 8 — 16 items total").
 - No per-item (individual piece) data entry in Phase 1 — category + count only.
@@ -133,10 +134,11 @@ flowchart TD
 - User marks the load "sent." This locks the itemized manifest as the sent-state record — the source of truth for reconciliation.
 
 ### 4.7 Receive & Reconcile (Counter-Side)
-- User opens the sent load and enters a **single total count received**.
-- The app compares total received vs. total sent:
+- User opens the sent load and can either enter a **single total count received** or skip straight to a per-category check.
+- If total received is entered, the app compares total received vs. total sent:
   - **Match** → load closes immediately (green state). Done in seconds.
   - **Mismatch** → the app automatically prompts an item-by-item, category-level check-off right there, so the user can identify and dispute the specific shortfall with the shop while still present.
+- If total received is skipped, the app takes the user directly to the same item-by-item, category-level check-off flow.
 
 ### 4.8 Reconcile at Home (Optional)
 - After leaving the counter, the user may return to any closed or open load and do a category-by-category check-off for her own records.
@@ -189,8 +191,8 @@ Given this is a solo, pre-launch build, raw user-count growth metrics (e.g., tot
 
 ## 7. Open Questions
 
-1. **Default clothing categories** — what's the initial fixed list of categories (Shirts, Trousers, Socks, Underwear, Towels, Bedsheets, etc.)? Does the user need the ability to add a custom category in Phase 1, or is a fixed list sufficient to start?
-2. **Load states beyond "sent" and "closed"** — is there a need for a "draft" state (load created but not yet sent), or does creating a load immediately imply intent to send?
+1. **Default clothing categories** — what's the initial fixed list of categories (Shirts, Trousers, Socks, Underwear, Towels, Bedsheets, etc.)? Should custom categories remain one-load-only, or be saved for reuse in future loads?
+2. **Draft / Counting state behavior** — what should happen to partially itemized loads that are never sent: auto-save indefinitely, prompt for discard, or apply some cleanup/archive rule?
 3. **Data retention** — how long are closed loads and their photos retained? Any storage limits to plan for, especially for photo-heavy users?
 4. **What happens on a "received more than sent" mismatch** — the discrepancy flag is framed around shortfalls, but what if the count is *higher* than expected (e.g., another customer's item got mixed in)? Does this need distinct handling from a shortfall?
 5. **Multiple loads open at the same shop simultaneously** — can a user have two loads in-flight to the same shop at once (e.g., a regular wash and a delicates load sent separately)? Does the UI need to disambiguate these clearly?
