@@ -27,11 +27,11 @@ Effort tags are **T-shirt sizes** (S/M/L), not calendar estimates — this is a 
 | # | Milestone | Delivers | Depends on |
 |---|---|---|---|
 | M0 | Repo & toolchain | Dev container + repo scaffolding, CI skeleton | — |
-| M1 | Aspire walking skeleton | `aspire run` boots web + api + Postgres + Azurite; one live `/health` round-trip | M0 |
-| M2 | Data model & migrations | SQLAlchemy models + Alembic; empty domain modules | M1 |
+| M1 | Aspire walking skeleton | `aspire run` boots web + api + Postgres + Azurite + Zitadel core + Login V2; one live `/health` round-trip | M0 |
+| M2 | Data model & migrations | `clothesline_db` (SQLAlchemy models + Alembic); empty domain modules | M1 |
 | M3 | Load lifecycle (online) | Create → itemize → send → receive/reconcile via API + basic UI | M2 |
 | M4 | Offline-first & sync | IndexedDB local store, service worker, `/sync`, mutation outbox | M3 |
-| M5 | Passwordless auth | `/auth/start`+`/verify`, JWT session, sign-in screen, Mailpit locally | M2 |
+| M5 | Integrate Zitadel (passwordless) | OIDC/PKCE to Login V2, JWKS validation, minimal user upsert, Mailpit locally | M2 |
 | M6 | Photos | Bundle + per-category photos, pre-signed Blob upload, offline capture | M3 |
 | M7 | Duplicate & polish | Duplicate flow, counter UX targets, empty/error states | M3 |
 | M8 | E2E hardening & deploy | Full Playwright suite (incl. offline) + `azd up` to ACA | M4, M5, M6, M7 |
@@ -43,7 +43,7 @@ flowchart LR
     M0["M0 · Repo & toolchain"] --> M1["M1 · Aspire skeleton"]
     M1 --> M2["M2 · Data model & migrations"]
     M2 --> M3["M3 · Load lifecycle (online)"]
-    M2 --> M5["M5 · Passwordless auth"]
+    M2 --> M5["M5 · Integrate Zitadel"]
     M3 --> M4["M4 · Offline-first & sync"]
     M3 --> M6["M6 · Photos"]
     M3 --> M7["M7 · Duplicate & polish"]
@@ -61,7 +61,7 @@ flowchart LR
 Foundation so every later milestone builds/tests uniformly.
 
 - [ ] Confirm dev container boots (`.devcontainer/`): Python 3.12 + `uv`, Node LTS, .NET SDK + Aspire workload, docker-in-docker.
-- [ ] Scaffold folder structure per spec §3: `aspire/Clothesline.AppHost`, `src/backend/clothesline_api`, `src/backend/clothesline_tests`, `src/frontend/clothesline-web`, `src/frontend/clothesline-e2e`.
+- [ ] Scaffold folder structure per spec §3: `aspire/Clothesline.AppHost`, `src/backend/clothesline_db`, `src/backend/clothesline_api`, `src/backend/clothesline_tests`, `src/frontend/clothesline-web`, `src/frontend/clothesline-e2e`.
 - [ ] Backend `pyproject.toml` managed by `uv`; add ruff + mypy + pytest.
 - [ ] Frontend `clothesline-web` via Vite (React + TS); add eslint + prettier + Vitest.
 - [ ] CI skeleton: lint + typecheck + (empty) test jobs for both stacks.
@@ -71,29 +71,29 @@ Foundation so every later milestone builds/tests uniformly.
 ---
 
 ### M1 — Aspire walking skeleton  ·  size **M**
-The single most important early milestone: prove the topology (spec §2).
+The single most important early milestone: prove the topology (spec §2.1), including the polyglot + prebuilt-image wiring.
 
-- [ ] Aspire AppHost declares: `clothesline-api` (Python/FastAPI container), `clothesline-web` (Vite container), a **Postgres** resource, and **Azurite** (Blob emulator).
-- [ ] AppHost wires connection strings / service discovery into both apps via env vars (no hand-maintained config).
+- [ ] Aspire AppHost declares: `clothesline-api` (Python/FastAPI), `clothesline-web` (Vite), a **Postgres** resource (app + zitadel databases), **Azurite** (Blob emulator), **Zitadel core** + **Login V2** (prebuilt images, plain-HTTP dev mode), and **Mailpit** (OTP sink).
+- [ ] AppHost wires connection strings, the OIDC issuer/JWKS URL, and service discovery into the apps via env vars (no hand-maintained config).
 - [ ] FastAPI `GET /health` returning `{status:"ok"}` + DB ping.
 - [ ] React app fetches `/health` and renders the status → proves web ↔ api ingress + CORS.
-- [ ] Multi-stage Dockerfiles for both containers (spec §11.3).
+- [ ] Multi-stage Dockerfiles for `clothesline-api` and `clothesline-web` (spec §11.5).
 
-**Acceptance:** `aspire run` boots the full graph; dashboard shows all resources healthy; the web app displays the live API health status.
+**Acceptance:** `aspire run` boots the full graph; dashboard shows all resources healthy (incl. Zitadel core + Login V2); the web app displays the live API health status.
 
 ---
 
-### M2 — Data model & migrations  ·  size **M**
-Persistence for the domain (spec §4).
+### M2 — Data model & migrations (`clothesline_db`)  ·  size **M**
+Persistence for the domain, in the shared data package (spec §3, §4, §5.1).
 
-- [ ] SQLAlchemy 2.x async models: `User`, `Load`, `LoadItem`, `Photo` (spec §4.1), with `updated_at`/`deleted_at` for sync.
-- [ ] Alembic wired for migrations; initial migration creates the schema.
+- [ ] Create the **`clothesline_db`** package (uv workspace member): SQLAlchemy 2.x async models `User {id, sub, email}`, `Load`, `LoadItem`, `Photo` (spec §4.1), with `updated_at`/`deleted_at` for sync.
+- [ ] Alembic migration project **inside `clothesline_db`**; initial migration creates the schema. (Execution is a pipeline step, not an ACA job — spec §11.2.)
 - [ ] Client-generated UUID PKs accepted on write (spec §7).
 - [ ] Static category catalog (spec §4.3) shared as config on server (validation) and client (offline seed).
-- [ ] Empty domain packages stubbed: `auth/`, `loads/`, `media/`, `sync/` (spec §5.1), each with `router/service/models/schemas`.
-- [ ] pytest: a throwaway-Postgres fixture (testcontainers or the Aspire dev DB).
+- [ ] Empty domain packages stubbed in `clothesline_api`: `auth/`, `loads/`, `media/`, `sync/` (spec §5.1), each with `router/service/schemas` importing models from `clothesline_db`.
+- [ ] pytest: a throwaway-Postgres fixture whose schema is built by running the `clothesline_db` migrations (exercises the real Alembic path).
 
-**Acceptance:** `alembic upgrade head` builds the schema; a round-trip integration test inserts and reads back a `Load` with items via the session layer.
+**Acceptance:** `alembic upgrade head` from `clothesline_db` builds the schema; a round-trip integration test inserts and reads back a `Load` with items via the session layer.
 
 ---
 
@@ -137,19 +137,19 @@ Tests:
 
 ---
 
-### M5 — Passwordless auth  ·  size **M**
-Replace the stub user with real sign-in (spec §3.1 PRD, §5.5).
+### M5 — Integrate Zitadel (passwordless)  ·  size **M**
+Replace the stub user with real sign-in delegated to Zitadel (spec §3.1 PRD, §5.5–5.6). No auth UI or token issuance is built by us.
 
-- [ ] `POST /auth/start` — issue OTP + magic-link token (hashed, single-use, short-TTL); always 200 (no enumeration).
-- [ ] `POST /auth/verify` — OTP or token → session JWT (+ refresh); create user on first verify.
-- [ ] `GET /auth/me`; JWT middleware; scope all load queries to the authenticated user.
-- [ ] Email delivery abstraction; **Mailpit/log sink** wired via Aspire locally (no real mail).
-- [ ] Frontend sign-in screen + magic-link deep-link handler; persist tokens to survive offline (spec §9 tradeoff).
+- [ ] Configure the Zitadel instance: a passwordless project with **email-OTP as the primary factor** and **JIT user creation** (no signup); Login V2 enabled (`LOGINV2_REQUIRED`).
+- [ ] Frontend: **OIDC Authorization Code + PKCE** client that redirects to **Login V2** for the email-code exchange, handles the callback, and persists tokens to survive offline (spec §9 tradeoff).
+- [ ] Backend `auth/`: **JWKS validation middleware** (issuer + audience checks) on every request; `GET /auth/me` returns the current user.
+- [ ] Minimal **user upsert** — on first authenticated request, upsert `User {id, sub, email}` from token claims; scope all load queries to that user.
+- [ ] Mailpit wired via Aspire locally so Zitadel's OTP emails are captured (no real mail).
 
 Tests:
-- [ ] pytest for start/verify (single-use, expiry, first-verify user creation, no-enumeration).
+- [ ] pytest for JWKS validation (valid/expired/wrong-audience) against a **mock OIDC issuer**, and for the first-request user upsert (spec §10.1).
 
-**Acceptance:** a user signs in via OTP read from Mailpit and via magic link; authenticated requests are scoped to their own loads.
+**Acceptance:** a user signs in email-only via Login V2 (OTP read from Mailpit); authenticated requests are scoped to their own loads; no password anywhere in the flow.
 
 ---
 
@@ -179,17 +179,19 @@ The "template" mechanic + hitting the usability targets (spec §3.4/§5.3, §6.3
 ### M8 — E2E hardening & deploy  ·  size **M**
 Prove the whole thing and ship it (spec §10.3, §11).
 
-- [ ] Playwright e2e (`clothesline-e2e`) against the Aspire graph, using pre-installed Chromium at `/opt/pw-browsers/chromium` (no `playwright install`):
-  - passwordless sign-in (OTP from Mailpit)
+- [ ] Playwright e2e (`clothesline-e2e`) against the Aspire graph (incl. real Zitadel core + Login V2), using pre-installed Chromium at `/opt/pw-browsers/chromium` (no `playwright install`):
+  - passwordless sign-in via Login V2 (OTP from Mailpit)
   - create → itemize → send → receive **match**
   - create → send → receive **mismatch** → check-off → close
   - **offline** create+itemize+send+receive → reconnect → assert single server-side load
   - duplicate (categories only) and photo attach (bundle + category via Azurite)
 - [ ] CI gate wired in order: lint/typecheck → pytest → Vitest → build containers → Playwright (spec §10.4).
-- [ ] `azd up`: provision ACA env + Postgres Flexible Server + Blob from the Aspire model; deploy both containers; secrets via Key Vault (spec §9, §11).
-- [ ] Smoke the deployed environment; confirm HTTPS ingress and the PWA installs on a phone.
+- [ ] **App-DB migration as a CI/CD step** (`alembic upgrade head` from `clothesline_db`), ordered before the api revision goes live (spec §11.2).
+- [ ] `azd up` — provision the **two ACA environments** (identity + application, spec §2.2): app env (web, api, Postgres #2, Blob) and identity env (Zitadel core + Login V2, App Gateway/Front Door path routing, Postgres #1); secrets via Key Vault.
+- [ ] Apply the **Zitadel-on-ACA checklist** (spec §5.6 / §11.3): `transport: http2`, external-TLS mode, masterkey + login-client PAT, `sslmode=require`, custom domain, `minReplicas: 1`.
+- [ ] Smoke the deployed environments; confirm HTTPS ingress, Login V2 sign-in, and the PWA installs on a phone.
 
-**Acceptance:** full Playwright suite green in CI; `azd up` yields a live ACA deployment where a phone can install the PWA and complete the counter flow end-to-end.
+**Acceptance:** full Playwright suite green in CI; `azd up` yields a live two-environment ACA deployment where a phone can sign in via Login V2, install the PWA, and complete the counter flow end-to-end.
 
 ---
 
@@ -199,7 +201,7 @@ Run alongside the milestones rather than as discrete steps:
 
 - **Testing** — pytest + Vitest land with each milestone; Playwright grows through M8 (spec §10).
 - **CI/CD** — skeleton in M0, gate assembled in M8; keep it green throughout.
-- **Security** — no-enumeration auth, hashed single-use tokens, user-scoped queries, SAS-gated photos, secrets via Key Vault (spec §9). Verify per relevant milestone, not bolted on at the end.
+- **Security** — identity delegated to Zitadel (no auth logic of our own), JWKS-validated requests, user-scoped queries, minimal PII (email only), SAS-gated photos, secrets via Key Vault (spec §9). Verify per relevant milestone, not bolted on at the end.
 - **Observability** — lean on the Aspire dashboard (logs/traces/metrics) locally from M1; wire ACA logging at deploy.
 
 ---
@@ -213,12 +215,14 @@ flowchart TB
     r3["Aspire polyglot wiring<br/>(Python/Vite as Aspire resources)"] --> m3["De-risk in M1 skeleton<br/>before any feature work"]
     r4["Photo storage cost/leak"] --> m4["Client WebP compression +<br/>SAS-gated private blobs (M6)"]
     r5["ACA deploy drift"] --> m5["Single source of truth in<br/>Aspire model; azd up (M8)"]
+    r6["Zitadel on ACA<br/>(http2 ingress + Login V2 routing)"] --> m6["De-risk in M1 skeleton;<br/>document reqs in spec §5.6"]
 ```
 
 | Risk | Likelihood | Mitigation |
 |---|---|---|
 | Offline sync produces duplicates / lost updates | Med | Client-generated UUIDs; idempotent upsert-by-id `/sync`; LWW is safe because Phase 1 is single-user (spec §7); dedicated M4 tests |
 | Aspire polyglot orchestration friction | Med | Prove it in the M1 skeleton before building features; keep Dockerfiles simple |
+| Zitadel self-host on ACA (http2 ingress, Login V2 single-origin routing, setup/masterkey) | Med | Stand Zitadel up in the M1 skeleton; requirements + sources captured in spec §5.6; App Gateway/Front Door for path routing |
 | Itemize flow misses the < 60s target | Med | Single-screen counter (spec §6.3); stopwatch acceptance check in M7 |
 | Photo storage cost / accidental public exposure | Low | Compress client-side; private container + short-lived SAS only (spec §8) |
 | Scope creep from PRD open questions | Med | Decisions already fixed in spec §14; treat changes as explicit re-scoping |
@@ -229,8 +233,8 @@ flowchart TB
 
 The MVP is done when:
 1. A phone-installed PWA completes **create → itemize → send → receive** for both matched and mismatched loads — **fully offline** — and syncs on reconnect.
-2. Passwordless sign-in works end-to-end.
+2. Passwordless, email-only sign-in works end-to-end via Zitadel Login V2 (no password, no signup step).
 3. Duplicate, photos (bundle + per-category), and optional home reconcile all function.
 4. The full Playwright suite (including the offline path) is green in CI.
-5. `azd up` deploys the Aspire graph to Azure Container Apps and the deployed app passes a phone smoke test.
+5. `azd up` deploys the two ACA environments (identity + application) and the deployed app passes a phone smoke test.
 6. The PRD usability targets (spec §13 / PRD §5) are met on a real device: itemize < 60s, matched reconcile < 30s, mismatched reconcile < 90s.

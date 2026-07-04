@@ -10,19 +10,22 @@
 
 ## 1. Summary
 
-Clothesline MVP is an **offline-first Progressive Web App** backed by a **Python FastAPI** service. The two run as separate containers, orchestrated in development and provisioned for the cloud by **Aspire (aspire.dev)**, and deployed as **Docker containers to Azure Container Apps (ACA)**.
+Clothesline MVP is an **offline-first Progressive Web App** backed by a **Python FastAPI** service. The pieces run as separate containers, orchestrated in development and provisioned for the cloud by **Aspire (aspire.dev)**, and deployed as **Docker containers to Azure Container Apps (ACA)**.
 
-The defining technical constraint from the PRD is **offline-first at the counter**: create-load, itemize, mark-sent, and enter-received-count must all work with no network. This drives an architecture where the **client is the primary system of record during a session** (local IndexedDB store), and the backend is a **sync target + durable store + auth + photo storage**, not a hard dependency for the core flow.
+The defining technical constraint from the PRD is **offline-first at the counter**: create-load, itemize, mark-sent, and enter-received-count must all work with no network. This drives an architecture where the **client is the primary system of record during a session** (local IndexedDB store), and the backend is a **sync target + durable store + photo storage**, not a hard dependency for the core flow.
+
+Identity is **not** built in-house: it is delegated to a self-hosted **Zitadel** OIDC identity server, so the security-critical login flow lives in a vetted system rather than our code.
 
 | Concern | Choice |
 |---|---|
 | Orchestration / infra | Aspire (aspire.dev) AppHost |
-| Deploy target | Azure Container Apps (Docker containers) |
+| Deploy target | Azure Container Apps (Docker containers), **two ACA environments** (identity vs. application) |
 | Backend | Python 3.12, FastAPI, `uv` (deps + packaging) |
 | Backend data | PostgreSQL (SQLAlchemy 2.x + Alembic) |
+| Persistence code | Shared **`clothesline_db`** package (ORM models + migrations), imported by the API |
 | Photo storage | Azure Blob Storage (Azurite locally) |
 | Frontend | React + Vite, TypeScript, PWA (service worker + IndexedDB) |
-| Auth | Passwordless email (magic link / OTP), JWT session |
+| Identity / auth | Self-hosted **Zitadel** (OIDC), passwordless email OTP via **Login V2**; API validates JWTs against Zitadel's JWKS |
 | Backend tests | pytest |
 | Frontend unit tests | Vitest |
 | E2E tests | Playwright |
@@ -32,52 +35,102 @@ The defining technical constraint from the PRD is **offline-first at the counter
 
 ## 2. Architecture
 
-### 2.1 Component view
+The system is described from two viewpoints: how it runs **locally** under a single `aspire run`, and how it is **deployed to Azure**, where components are separated across two ACA environments and each maps to a specific Azure resource.
+
+### 2.1 Local architecture (`aspire run`)
+
+Locally, the Aspire AppHost boots the whole graph as containers/processes with one command and a single dashboard. There is **no TLS termination or reverse-proxy hop** in dev — Zitadel runs in plain-HTTP mode (`ExternalSecure=false`), and one Postgres server hosts two databases (app + zitadel) for simplicity. Outbound email (Zitadel's OTP codes) is captured by **Mailpit** so nothing is actually sent.
 
 ```mermaid
 flowchart TB
-    subgraph host["Aspire AppHost (aspire.dev)"]
-        hostnote["local orchestration + azd provisioning"]
+    dev["Developer browser"]
+
+    subgraph host["Aspire AppHost — one 'aspire run', one dashboard"]
+        web["web<br/>Vite dev server"]
+        api["api<br/>Uvicorn --reload"]
+        mig["clothesline_db migration<br/>alembic upgrade (run once at startup)"]
+        zitadel["Zitadel core<br/>plain HTTP, ExternalSecure=false"]
+        loginv2["Zitadel Login V2<br/>:3000, /ui/v2/login"]
+        pg[("PostgreSQL<br/>2 databases: app + zitadel")]
+        azurite[("Azurite<br/>Blob emulator")]
+        mailpit["Mailpit<br/>OTP email sink"]
     end
 
-    web["Frontend PWA<br/>React + Vite<br/>service worker + IndexedDB<br/>(installable / offline)"]
-    api["Backend API<br/>FastAPI (uv)<br/>/api/v1/*"]
-    db[("PostgreSQL<br/>loads, users")]
-    blob[("Blob Storage<br/>photos")]
-    email["Email provider<br/>magic link / OTP"]
-
-    host -. describes / wires .-> web
-    host -. describes / wires .-> api
-    host -. describes / wires .-> db
-
-    web <-->|"HTTPS/JSON · sync"| api
-    api -->|TCP| db
-    api -->|HTTPS| blob
-    api -->|email| email
+    dev -->|app UI| web
+    dev -->|OIDC login| loginv2
+    loginv2 -->|Session API| zitadel
+    web -->|HTTPS/JSON · sync| api
+    api -->|validate JWT via JWKS| zitadel
+    api --> pg
+    api --> azurite
+    mig --> pg
+    zitadel --> pg
+    zitadel --> mailpit
 ```
 
-### 2.2 Runtime containers (Azure Container Apps)
+### 2.2 Cloud-deployed architecture (Azure)
 
-Two application containers plus managed backing services:
+In Azure the topology is split across **two ACA environments** for separation of concerns: an **Identity** environment (Zitadel and its data) and an **Application** environment (our web/API and their data). Each box below names the concrete Azure resource it lives in. The only cross-environment traffic is standard OIDC over public HTTPS (browser → login, API → JWKS), so the split costs nothing on the happy path.
 
-1. **`clothesline-web`** — Nginx serving the built Vite/React static bundle + PWA service worker. Ingress: external, HTTPS.
-2. **`clothesline-api`** — FastAPI (Uvicorn/Gunicorn) container. Ingress: external (called by the PWA), HTTPS.
+```mermaid
+flowchart TB
+    user["User's phone<br/>installed PWA"]
 
-Backing services (provisioned by Aspire, not app containers):
-- **Azure Database for PostgreSQL – Flexible Server** (or a Postgres container in ACA for the cheapest MVP footprint — see §11.2).
-- **Azure Blob Storage** account/container for photos.
+    subgraph azure["Azure"]
+        acr["Azure Container Registry<br/>(shared image registry)"]
+        email["Azure Communication Services<br/>Email — OTP delivery"]
 
-> The frontend is a static bundle and *could* be hosted on Azure Static Web Apps or a CDN, but the PRD/stack calls for Docker-in-ACA uniformity, so it ships as a container behind ACA ingress. Revisit if cost/latency argues otherwise.
+        subgraph envA["ACA Environment A · Identity"]
+            agw["Azure Application Gateway / Front Door<br/>single-origin path routing"]
+            zitadel["Zitadel core<br/>Azure Container App<br/>ingress transport: http2, minReplicas 1"]
+            loginv2["Zitadel Login V2<br/>Azure Container App<br/>ghcr.io/zitadel/zitadel-login :3000"]
+            pgId[("Azure DB for PostgreSQL<br/>Flexible Server #1 — identity")]
+            kvId["Azure Key Vault<br/>masterkey · login-client PAT"]
+        end
+
+        subgraph envB["ACA Environment B · Application"]
+            web["clothesline-web<br/>Azure Container App"]
+            api["clothesline-api<br/>Azure Container App"]
+            pgApp[("Azure DB for PostgreSQL<br/>Flexible Server #2 — app data")]
+            blob[("Azure Blob Storage<br/>photos")]
+            kvApp["Azure Key Vault<br/>connection strings · secrets"]
+        end
+    end
+
+    user -->|OIDC login · HTTPS| agw
+    agw -->|/ui/v2/login| loginv2
+    agw -->|everything else| zitadel
+    loginv2 -->|Session API| zitadel
+    zitadel --> pgId
+    zitadel --> kvId
+    zitadel -->|OTP mail| email
+
+    user -->|app + HTTPS/JSON sync| web
+    web --> api
+    api -->|validate JWT via JWKS · HTTPS| agw
+    api --> pgApp
+    api --> blob
+    api --> kvApp
+
+    acr -.->|images| envA
+    acr -.->|images| envB
+```
+
+Notes on the cloud topology:
+- **Two Postgres Flexible Servers** (identity vs. app) with independent credentials, backups, and network rules. Photos live in **Azure Blob Storage**; the app DB stores only keys/metadata (§8).
+- **Login V2 requires its own Container App plus a path-routing layer** — see §5.6(a) for the why and the sources.
+- **Database migrations are not a resource here** — they run as a CI/CD pipeline step (§11.2), not a standing ACA job.
+- **Collapse-to-one-environment fallback:** if the two-environment cost isn't justified, Zitadel + Login V2 can move into the application environment as their own Container Apps; the app↔identity link is just the issuer URL, so it's a config change. **The two Postgres servers stay split regardless** (§11.6).
 
 ### 2.3 Aspire's role (aspire.dev)
 
 The **Aspire AppHost** is the single source of truth for the topology. It:
-- Declares the two app containers and their backing resources (Postgres, Blob/Azurite).
-- Wires **connection strings and service discovery** into each container via environment variables — no hand-maintained config duplication.
+- Declares every app container (web, api), the identity containers (Zitadel core, Login V2), the run-once `clothesline_db` migration, and the backing resources (two Postgres databases/servers, Blob/Azurite, Mailpit locally).
+- Wires **connection strings, the OIDC issuer/JWKS URL, and service discovery** into each container via environment variables — no hand-maintained config duplication.
 - Runs the whole graph locally with one command (`aspire run`), giving a dashboard with logs, traces, and metrics across services.
-- Feeds `azd` (Azure Developer CLI) to **provision + deploy** the same graph to Azure Container Apps (`azd up`).
+- Feeds `azd` (Azure Developer CLI) to **provision + deploy** to Azure Container Apps. The two-environment split maps to **two deploy targets** (§11.1).
 
-Aspire is polyglot here: the AppHost is .NET, but the orchestrated resources are the **Python FastAPI** service and the **Vite/React** app (added as executable/container resources with Dockerfiles). See `CLAUDE.md` for how this sits at the repo root.
+Aspire is polyglot here: the AppHost is .NET, but the orchestrated resources are the **Python FastAPI** service, the **Vite/React** app, and the prebuilt **Zitadel** images. See `CLAUDE.md` for how this sits at the repo root.
 
 ---
 
@@ -90,10 +143,11 @@ Aspire is polyglot here: the AppHost is .NET, but the orchestrated resources are
 ├── aspire/
 │   └── Clothesline.AppHost/   Aspire AppHost project (topology + azd target)
 ├── specs/
-│   └── 01-mvp/                this spec
+│   └── 01-mvp/                this spec + implementation plan
 └── src/
     ├── backend/
-    │   ├── clothesline_api/    FastAPI app (backend module)
+    │   ├── clothesline_db/     shared data package: ORM models + Alembic migrations
+    │   ├── clothesline_api/    FastAPI app (imports clothesline_db)
     │   └── clothesline_tests/  pytest unit/integration tests
     └── frontend/
         ├── clothesline-web/    Vite + React PWA (frontend module)
@@ -101,8 +155,9 @@ Aspire is polyglot here: the AppHost is .NET, but the orchestrated resources are
 ```
 
 Notes:
-- **Backend module** (`clothesline_api`) is a modular monolith — one deployable, internally split by domain package (§5.1). `uv` manages its dependencies and packaging via `pyproject.toml`.
-- **Backend unit test project** (`clothesline_tests`) holds pytest suites; unit tests run against the domain/service layer, integration tests against a throwaway Postgres.
+- **Shared data package** (`clothesline_db`) owns all SQLAlchemy models and the Alembic migration project. It is a `uv` workspace member imported by `clothesline_api`, so the schema has a single owner and can evolve on its own release cadence (migrations run as a pipeline step, §11.2). This is a deliberate trade: models are centralized rather than co-located in each domain module, chosen for maintainability and to allow a future second deployable to share the schema.
+- **Backend module** (`clothesline_api`) is a modular monolith — one deployable, internally split by domain package (§5.1) — that depends on `clothesline_db`. `uv` manages dependencies/packaging via `pyproject.toml`.
+- **Backend unit test project** (`clothesline_tests`) holds pytest suites; unit tests run against the domain/service layer, integration tests against a throwaway Postgres built from the migration project.
 - **Frontend module** (`clothesline-web`) is the Vite/React PWA; **Vitest** unit tests live inside it, colocated with components.
 - **Playwright e2e** (`clothesline-e2e`) is its own project so it can drive the built PWA (including offline flows) independently of the unit test runner.
 
@@ -114,18 +169,19 @@ The same logical model exists on the client (IndexedDB) and server (Postgres). T
 
 ### 4.1 Entities
 
-**User**
+**User** — a **minimal local mirror** of the Zitadel identity, upserted from token claims on first authenticated request. **`email` is the only PII stored in the application database**; everything else about the person lives in Zitadel.
 | field | type | notes |
 |---|---|---|
-| id | uuid | pk |
-| email | text | unique, lowercased |
+| id | uuid | pk (local) |
+| sub | text | unique; the Zitadel subject (`sub`) claim — the stable link to the identity server |
+| email | text | from token claims; the only PII in the app DB |
 | created_at | timestamptz | |
 
 **Load** — the core record (PRD §3.2, §3.6, §3.7)
 | field | type | notes |
 |---|---|---|
 | id | uuid | pk, **client-generated** (uuid v4) so offline creates are stable across sync |
-| user_id | uuid | fk |
+| user_id | uuid | fk → User.id |
 | shop_name | text | |
 | shop_location | text | free text in MVP |
 | send_date | date | |
@@ -188,32 +244,34 @@ Shirts, Trousers, Shorts, Underwear, Socks, Towels, Bedsheets, Jackets, Dresses,
 
 ## 5. Backend design (`src/backend/clothesline_api`)
 
-### 5.1 Internal structure (modular monolith)
+### 5.1 Internal structure (modular monolith + shared data package)
 
 ```
-clothesline_api/
-├── main.py               FastAPI app factory, router mounting, middleware
-├── config.py             settings from env (Aspire-injected)
-├── db.py                 SQLAlchemy engine/session, async
-├── auth/                 passwordless email auth + JWT
-├── loads/                loads + load items + reconcile (core domain)
-├── media/                photo upload URLs + blob integration
-├── sync/                 batch pull/push sync endpoint
-└── common/               errors, pagination, dependencies
+src/backend/
+├── clothesline_db/            shared data package (uv workspace member)
+│   ├── models/                all SQLAlchemy models: User, Load, LoadItem, Photo
+│   ├── migrations/            Alembic env + versioned scripts
+│   └── session.py             engine/session factory
+└── clothesline_api/           FastAPI app (imports clothesline_db)
+    ├── main.py                app factory, router mounting, middleware
+    ├── config.py              settings from env (Aspire-injected)
+    ├── auth/                  OIDC/JWKS token validation + minimal user upsert
+    ├── loads/                 loads + items + reconcile (core domain)
+    ├── media/                 photo upload URLs + blob integration
+    ├── sync/                  batch pull/push sync endpoint
+    └── common/                errors, pagination, dependencies
 ```
 
-Each domain package holds `router.py` (HTTP), `service.py` (business logic), `models.py` (SQLAlchemy), `schemas.py` (Pydantic). Services are unit-testable without HTTP.
+Each domain package holds `router.py` (HTTP), `service.py` (business logic), and `schemas.py` (Pydantic), and **imports its ORM models from `clothesline_db`**. Services are unit-testable without HTTP. The `auth/` package no longer *issues* tokens — it validates the bearer JWT against Zitadel and upserts the minimal user row (§5.5).
 
 ### 5.2 API surface (`/api/v1`)
 
-All endpoints require a valid session JWT except the auth start/verify pair.
+All endpoints require a valid **Zitadel-issued access token** (bearer JWT), validated against Zitadel's JWKS. There are **no token-issuing endpoints** in our API — authentication happens at Zitadel (§5.5).
 
-**Auth (PRD §3.1)**
+**Identity**
 | method | path | purpose |
 |---|---|---|
-| POST | `/auth/start` | body `{email}` → issues OTP + magic link, emails it. Always 200 (no account enumeration). |
-| POST | `/auth/verify` | body `{email, code}` **or** `{token}` → returns session JWT (+ refresh). Creates the user on first verify. |
-| GET | `/auth/me` | current user. |
+| GET | `/auth/me` | current user from the validated token; upserts the minimal `User {id, sub, email}` row on first call. |
 
 **Loads (PRD §3.2–3.8)**
 | method | path | purpose |
@@ -257,11 +315,34 @@ Because a duplicate is just a normal `draft` load, duplication can be performed 
 
 Check-off submitted via `/reconcile` with per-category `count_received`; server stores the values and sets status `closed`. **Received-more-than-sent (PRD open question O4)** is handled by allowing `count_received > count_sent` per category and a positive `delta`; the UI labels it as a surplus rather than a shortfall. No blocking validation either way — the tool records reality, it doesn't police it.
 
-### 5.5 Auth details
+### 5.5 Identity & authentication (Zitadel)
 
-- **Passwordless**: `/auth/start` generates a 6-digit OTP and an equivalent signed magic-link token, both short-TTL (e.g. 10 min), single-use, stored hashed. Email sent via a provider (Azure Communication Services Email, or a transactional provider such as Resend). Locally, a **Mailpit/log sink** captures emails so no real mail is sent (§10.3).
-- **Session**: short-lived access JWT (~15 min) + longer refresh token. Tokens signed with a secret injected by Aspire (Key Vault in Azure). The PWA stores tokens to survive offline sessions (PRD §3.1: zero re-auth friction) — kept in IndexedDB/`localStorage` with the tradeoff noted in §9.
-- No password, no recovery flow (PRD §3.1).
+Identity is delegated entirely to a **self-hosted Zitadel** OIDC server. Our code never stores credentials or issues tokens; it only validates them and keeps the minimal user mirror (§4.1).
+
+- **Passwordless, no signup (PRD §3.1).** The user enters only their email. Zitadel (via **Login V2**) creates the account **just-in-time** if it doesn't exist and sends a **one-time email code / magic link** as the *primary* factor; on verification Zitadel issues OIDC tokens. No password is ever set, and there is no separate signup step — exactly the counter-friendly, zero-setup flow the PRD requires.
+- **Login flow.** The SPA uses **OIDC Authorization Code + PKCE**, redirecting to Zitadel **Login V2** for the email-code exchange, then returning with id/access/refresh tokens. Building on Login V2 (rather than a hand-rolled screen) keeps the security-critical login UI in Zitadel's vetted, maintained component.
+- **API validation.** The API validates the bearer **access token against Zitadel's JWKS** (issuer + audience checks) on every request. No introspection round-trip on the hot path.
+- **Local user mirror.** On the first authenticated request, the API upserts `User {id, sub, email}` from the token claims; `email` is refreshed on subsequent logins so it can't drift. This is the only PII we persist.
+- **Offline.** Tokens are persisted client-side (IndexedDB) so an installed PWA stays authenticated through offline sessions (PRD §3.1: zero re-auth friction); access tokens are short-lived and refreshed on reconnect. Tradeoff noted in §9.
+- **Local dev.** Zitadel core + Login V2 run as containers under Aspire (plain HTTP); OTP emails are captured by **Mailpit** (§10.3), so passwordless sign-in is fully exercisable offline of any real mail provider.
+
+### 5.6 Zitadel self-hosting requirements on Azure Container Apps
+
+Self-hosting Zitadel on ACA has two non-obvious requirements. They are documented here so they aren't rediscovered painfully at deploy time.
+
+**(a) Login V2 needs its own Container App (+ single-origin routing).**
+Since Zitadel v4, the login UI is **Login V2**, a standalone **Next.js application shipped as its own image** (`ghcr.io/zitadel/zitadel-login`) that listens on **port 3000** under the path **`/ui/v2/login`**. It is **not part of the default Zitadel core container** — it talks to the core over the API as a machine user (`login-client`, role `IAM_LOGIN_CLIENT`) using a PAT the core generates, and is enabled with `ZITADEL_DEFAULTINSTANCE_FEATURES_LOGINV2_REQUIRED=true`. Therefore self-hosting requires **provisioning a second Container App** for Login V2 alongside the core.
+
+Zitadel expects the core and the login app to be served under a **single origin with path-based routing** (`/ui/v2/login` → Login V2, everything else → Zitadel core) so the OIDC flow and session cookies stay same-origin. Because **ACA gives each Container App its own FQDN and does not path-route across apps**, the identity environment adds a **path-routing layer — Azure Application Gateway or Azure Front Door** — that presents one identity domain and splits traffic between the two backends.
+Sources: [ZITADEL — Login App](https://zitadel.com/docs/guides/integrate/login-ui/login-app) · [ZITADEL — Connect self-hosted Login UI (login-client)](https://zitadel.com/docs/self-hosting/manage/login-client) · [ACA — transport protocols](https://learn.microsoft.com/azure/container-apps/connect-apps#transport-protocols) · [ACA — ingress settings](https://learn.microsoft.com/azure/container-apps/ingress-how-to#ingress-settings)
+
+**(b) TLS termination + HTTP/2 (h2c) for gRPC.**
+ACA terminates TLS at ingress, so Zitadel runs in **external-TLS mode**: `ExternalSecure=true`, `TLS_ENABLED=false`, `ExternalPort=443`, `ExternalDomain=<identity custom domain>`. Zitadel serves its management/admin APIs and console over **gRPC (HTTP/2)** and expects the proxy to forward **h2c (cleartext HTTP/2)**, so the ACA ingress **`transport` must be set to `http2`** (the default `auto` is not sufficient for gRPC end-to-end). Additional requirements:
+- **Bootstrap:** Zitadel needs an `init`/`setup` step (schema + first instance/admin) via `start-from-init`, and a **32-char masterkey** supplied as a secret (Key Vault).
+- **Database TLS:** Azure Postgres Flexible Server enforces TLS, so the connection uses `sslmode=require`.
+- **`minReplicas: 1`** — an IdP shouldn't scale to zero (cold starts hurt login latency and it runs background projections).
+- **Custom domain** for a stable issuer URL, which also avoids the generated-FQDN chicken-and-egg (Zitadel bakes `ExternalDomain` into token issuers/cookies).
+Sources: [ACA — transport protocols](https://learn.microsoft.com/azure/container-apps/connect-apps#transport-protocols) · [ACA — ingress overview (TLS, HTTP/2, gRPC)](https://learn.microsoft.com/azure/container-apps/ingress-overview#protocol-types) · [ZITADEL — HTTP/2](https://zitadel.com/docs/self-hosting/manage/http2) · [ZITADEL — TLS modes](https://zitadel.com/docs/self-hosting/manage/tls_modes) · [ZITADEL — Reverse proxy configuration](https://zitadel.com/docs/self-hosting/manage/reverseproxy/reverse_proxy)
 
 ---
 
@@ -273,6 +354,7 @@ Check-off submitted via `/reconcile` with per-category `count_received`; server 
 - **PWA**: `vite-plugin-pwa` (Workbox) for the service worker + web app manifest → installable, offline app shell.
 - **Local store**: IndexedDB via a thin wrapper (e.g. `idb`/Dexie) — the offline system of record.
 - **Server state / sync**: a query layer (e.g. TanStack Query) that reads/writes IndexedDB first and reconciles with `/sync` in the background.
+- **Auth**: an OIDC/PKCE client library that redirects to Zitadel Login V2 and manages token storage/refresh (§5.5).
 - **Routing**: React Router.
 - **Styling**: mobile-first; large tap targets for the counter (see §6.3).
 
@@ -280,7 +362,7 @@ Check-off submitted via `/reconcile` with per-category `count_received`; server 
 
 | Screen | PRD ref | Notes |
 |---|---|---|
-| Sign in | §3.1 | email input → "check your email"; deep-link handler for magic link. |
+| Sign in | §3.1 | email-only start → **OIDC redirect to Zitadel Login V2** for the email-code exchange; OIDC callback handler completes sign-in and stores tokens. |
 | Home / load list | §3.2 | list of loads with bundle-photo thumbnail + status chip; "New load" and per-load "⋮ → Duplicate". |
 | Create / edit load | §3.2–3.3 | shop, location, date + the tap-counter grid. |
 | Tap counter | §3.3 | category grid; each tile increments on tap; running total pinned. |
@@ -302,6 +384,7 @@ PRD success metric is **< 60s to itemize**. Design implications:
 - All mutations (create, itemize, send, receive, reconcile, duplicate) write to IndexedDB synchronously and enqueue a sync op.
 - Photos captured offline are stored as blobs in IndexedDB with `local_only = true`, uploaded on reconnect.
 - A subtle sync indicator shows pending/failed sync; it never blocks the core flow.
+- **Auth is online-only by nature** (sign-in requires reaching Zitadel), but once tokens are stored the core counter flow runs fully offline; tokens refresh on reconnect.
 
 ---
 
@@ -330,12 +413,11 @@ PRD success metric is **< 60s to itemize**. Design implications:
 
 ## 9. Security & privacy
 
-- All ingress over HTTPS (ACA-managed certs).
-- Auth secrets/JWT signing key + DB/blob connection strings come from **Azure Key Vault**, injected by Aspire/azd; never committed. Locally they come from Aspire/dev-container config.
-- `/auth/start` returns 200 regardless of whether the email exists (no account enumeration).
-- OTP/magic-link tokens are hashed at rest, single-use, short-TTL.
-- Every data query is scoped to the authenticated `user_id` (single-user data isolation).
-- **Token-at-rest tradeoff:** to honor "zero re-auth friction" offline, session tokens are persisted client-side. Access tokens are short-lived and refreshed; the refresh token is the sensitive item. Accepted for a single-user consumer MVP; flagged for revisit if the threat model changes.
+- **Identity is offloaded to Zitadel.** The security-critical login flow (credential handling, code generation/expiry, session management) lives in Zitadel + Login V2, not our code. Our API only **validates JWTs against Zitadel's JWKS** and scopes every query to the authenticated user.
+- **Minimal PII.** The application DB stores **only `email`** as PII (plus the opaque `sub`); all other identity data stays in Zitadel's own database (Postgres Flexible Server #1).
+- All ingress over HTTPS (ACA-managed certs); Zitadel runs in external-TLS mode with `http2` ingress (§5.6b).
+- **Secrets** — Zitadel masterkey, the `login-client` PAT, JWKS/issuer config, and DB/Blob connection strings — come from **Azure Key Vault**, injected by Aspire/azd; never committed. Locally they come from Aspire/dev-container config.
+- **Token-at-rest tradeoff:** to honor "zero re-auth friction" offline, Zitadel tokens are persisted client-side. Access tokens are short-lived and refreshed; the refresh token is the sensitive item. Accepted for a single-user consumer MVP; flagged for revisit if the threat model changes.
 - Photos are private (SAS-gated), not public URLs.
 
 ---
@@ -344,7 +426,7 @@ PRD success metric is **< 60s to itemize**. Design implications:
 
 ### 10.1 Backend unit/integration (`clothesline_tests`, pytest)
 - **Unit**: domain services (reconcile match/mismatch/surplus, duplicate semantics, send-freezes-manifest, sync merge/LWW) tested without HTTP.
-- **Integration**: FastAPI `TestClient` against a **throwaway Postgres** (testcontainers or the Aspire-provisioned dev DB), covering auth start/verify, the loads lifecycle, and `/sync` idempotency.
+- **Integration**: FastAPI `TestClient` against a **throwaway Postgres built from the `clothesline_db` migration project** (exercising the real Alembic path), covering the loads lifecycle, `/sync` idempotency, and the user upsert. Auth is stubbed with a **lightweight OIDC mock** (e.g. `mock-oauth2-server`) that issues test JWTs the API validates against the mock's JWKS — no real Zitadel needed for fast tests.
 - Run via `uv run pytest`.
 
 ### 10.2 Frontend unit (Vitest, inside `clothesline-web`)
@@ -352,40 +434,52 @@ PRD success metric is **< 60s to itemize**. Design implications:
 - IndexedDB wrapper and outbox/sync-merge logic tested against a fake IndexedDB.
 
 ### 10.3 E2E (`clothesline-e2e`, Playwright)
-- Full flows against the running Aspire graph:
-  - Passwordless sign-in (OTP read from the **Mailpit/log sink**).
+- Full flows against the running Aspire graph, which includes the **real Zitadel core + Login V2** containers:
+  - Passwordless sign-in (email → OTP read from the **Mailpit** sink → authenticated).
   - Create → itemize → send → receive **match** (fast close).
   - Create → send → receive **mismatch** → category check-off → close.
   - Duplicate a load → verify only categories carry over, counts/photos/shop reset.
-  - **Offline path**: Playwright toggles offline context, performs create+itemize+send+receive fully offline, then goes online and asserts the load syncs to the API.
+  - **Offline path**: Playwright signs in online, then toggles offline context, performs create+itemize+send+receive fully offline, then goes online and asserts the load syncs to the API.
   - Photo attach (bundle + per-category) via file input against Azurite.
 - Playwright is browser-driven; use the pre-installed Chromium (`/opt/pw-browsers/chromium`) — do not run `playwright install`.
 
 ### 10.4 CI gate
-Lint + typecheck (ruff/mypy backend, eslint/tsc frontend) → backend pytest → frontend Vitest → build both containers → Playwright e2e against the Aspire graph.
+Lint + typecheck (ruff/mypy backend, eslint/tsc frontend) → backend pytest → frontend Vitest → build containers → Playwright e2e against the Aspire graph.
 
 ---
 
 ## 11. Deployment (Azure Container Apps via Aspire)
 
-### 11.1 Flow
-- **Local**: `aspire run` boots the AppHost — Postgres, Azurite, API, and web — with the dashboard for logs/traces.
-- **Provision + deploy**: `azd up` reads the Aspire AppHost model and provisions the ACA environment + backing resources, builds each Dockerfile, pushes to Azure Container Registry, and deploys the revisions.
-- Config (connection strings, secrets) flows from Aspire resource wiring → ACA env vars / Key Vault references. No manual per-environment config drift.
+### 11.1 Flow & environments
+- **Local**: `aspire run` boots the entire graph (§2.1) — web, api, migration, Zitadel core + Login V2, Postgres, Azurite, Mailpit — with one dashboard.
+- **Cloud**: the topology is provisioned as **two ACA environments** (Identity, Application — §2.2), which maps to **two `azd`/deploy targets**. `azd` reads the Aspire model, provisions each environment + its backing resources, builds Dockerfiles, pushes to **Azure Container Registry**, and deploys the revisions. Prebuilt Zitadel images are pulled directly.
+- Config (connection strings, OIDC issuer/JWKS URL, secrets) flows from Aspire resource wiring → ACA env vars / Key Vault references. No manual per-environment config drift.
 
-### 11.2 Backing store choice
-- MVP default: **Azure Database for PostgreSQL – Flexible Server** (managed, small SKU). A containerized Postgres in ACA is cheaper but less durable; acceptable only for a throwaway preview environment. Blob Storage is a standard account with one private container for photos.
+### 11.2 Database migrations (CI/CD, not a standing resource)
+- App-DB migrations run as a **CI/CD pipeline step** during release: `alembic upgrade head` from the `clothesline_db` project, ordered **before** the new `clothesline-api` revision goes live. Migrations are a release concern, so they are **not** a permanent ACA job.
+- **Network caveat:** the pipeline runner must reach Postgres Flexible Server #2. That's fine with a public endpoint + firewall rules (or an in-VNet runner). **If** the DB is later locked to private/VNet-only with externally-hosted runners, the fallback is an **on-demand `az containerapp job` run** executed inside the environment purely as a deploy step — still not a standing app.
+- Zitadel's own `init`/`setup` is separate (its IdP bootstrap via `start-from-init`, §5.6b), not our schema migration.
 
-### 11.3 Containers
-- `clothesline-api`: multi-stage Dockerfile using `uv` to install deps into a slim Python 3.12 image; runs Uvicorn behind Gunicorn.
+### 11.3 Zitadel on ACA checklist
+Applies the requirements from §5.6: Login V2 as its own Container App + Application Gateway/Front Door path routing; `transport: http2` ingress; external-TLS mode (`ExternalSecure`/`TLS_ENABLED`/`ExternalPort`/`ExternalDomain`); masterkey + `login-client` PAT in Key Vault; `sslmode=require`; `minReplicas: 1`; custom domain for a stable issuer.
+
+### 11.4 Backing store choice
+- MVP default: **Azure Database for PostgreSQL – Flexible Server** (managed, small SKU) — **two instances**, identity vs. app. Blob Storage is a standard account with one private container for photos.
+
+### 11.5 Containers & images
+- `clothesline-api`: multi-stage Dockerfile using `uv` to install deps into a slim Python 3.12 image; runs Uvicorn behind Gunicorn; depends on `clothesline_db`.
 - `clothesline-web`: multi-stage Dockerfile — `node` build stage runs `vite build`, static output served by Nginx; SPA + service-worker friendly (correct cache headers, fallback to `index.html`).
+- **Zitadel core** and **Login V2** use the official prebuilt images (`ghcr.io/zitadel/zitadel`, `ghcr.io/zitadel/zitadel-login`) — we operate them, we don't build them.
+
+### 11.6 Collapse-to-one-environment fallback
+If two environments prove more cost than the MVP justifies, Zitadel core + Login V2 (+ their routing) move into the **application** environment as their own Container Apps. Because the app↔identity coupling is just the OIDC issuer URL, this is a **pipeline/config change, not a redesign**. The **two Postgres Flexible Servers stay separate** either way — collapsing environments does not merge the databases.
 
 ---
 
 ## 12. Local development
 
 - Open the repo in the **Dev Container** (`.devcontainer/`) — provides Python 3.12 + `uv`, Node.js, the .NET SDK + Aspire workload, and Docker access.
-- One command (`aspire run`) starts the full graph; the PWA hot-reloads via Vite, the API via Uvicorn `--reload`.
+- One command (`aspire run`) starts the full graph — including Zitadel core + Login V2 and Mailpit — so passwordless sign-in works end-to-end with no cloud dependencies; the PWA hot-reloads via Vite, the API via Uvicorn `--reload`.
 - See `CLAUDE.md` at the repo root for the authoritative dev/orchestration notes.
 
 ---
@@ -394,7 +488,7 @@ Lint + typecheck (ruff/mypy backend, eslint/tsc frontend) → backend pytest →
 
 | PRD § | Feature | Where implemented |
 |---|---|---|
-| 3.1 | Passwordless email auth | `auth/` module; `/auth/start`+`/auth/verify`; Mailpit locally (§5.5) |
+| 3.1 | Passwordless email auth | **Zitadel** (Login V2, email-OTP, JIT user); API validates JWTs via JWKS; Mailpit locally (§5.5–5.6) |
 | 3.2 | Create a load | `loads/`; `POST /loads`; create/edit screen |
 | 3.3 | Itemize tap-counter | `LoadItem`; tap-counter screen (§6.3) |
 | 3.4 | Duplicate load | `/duplicate` + client-side duplicate (§5.3) |
