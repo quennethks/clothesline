@@ -59,7 +59,7 @@ flowchart TB
     dev -->|app UI| web
     dev -->|OIDC login| loginv2
     loginv2 -->|Session API| zitadel
-    web -->|HTTPS/JSON · sync| api
+    web -->|HTTP/JSON · sync| api
     api -->|validate JWT via JWKS| zitadel
     api --> pg
     api --> azurite
@@ -135,6 +135,8 @@ Aspire is polyglot here: the AppHost is .NET, but the orchestrated resources are
 ---
 
 ## 3. Repository & folder structure
+
+> **Target layout** — `aspire/` and `src/` do not exist yet; they will be created as the MVP is built.
 
 ```
 /                              repo root
@@ -512,7 +514,7 @@ Two flags bridge them:
 
 **An RxDB pull brings only the document, not the image.** So whether a photo is viewable offline depends on whether its bytes are on *this* device:
 
-- **Captured on this device → always offline-viewable.** Its bytes were stashed on capture and kept as cache (§8.2.4); no download needed. *(This is the dominant case — you photograph a piece at the counter and review it seconds later, offline, on the same phone.)*
+- **Captured on this device → always offline-viewable.** Its bytes were stashed on capture and kept as cache (§8.2, step 4); no download needed. *(This is the dominant case — you photograph a piece at the counter and review it seconds later, offline, on the same phone.)*
 - **Bytes not local** (captured on another of the user's devices, or evicted from cache) → **lazy cache-on-view**: when online, opening the photo calls **`GET /media/{photo_id}`** → read SAS URL → fetches bytes from Blob → **caches them locally**, so it's viewable offline thereafter. A photo **never opened while online** shows a **"connect to view"** placeholder when offline.
 - **Pending state:** a synced `photos` doc can arrive with `blob_key = null` (the capturer hasn't drained its upload queue yet). Viewers show a **pending/placeholder** until `blob_key` fills in.
 

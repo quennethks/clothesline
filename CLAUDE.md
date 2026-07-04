@@ -35,6 +35,8 @@ The repo ships a **dev container** (`.devcontainer/`). Do development inside it 
 
 ## Folder structure
 
+> **Target layout** — `aspire/` and `src/` do not exist yet; they will be created as the MVP is built.
+
 ```
 /
 ├── .devcontainer/                dev container definition
@@ -52,7 +54,7 @@ The repo ships a **dev container** (`.devcontainer/`). Do development inside it 
         └── clothesline-e2e/        Playwright e2e tests
 ```
 
-Backend is a modular monolith (one deployable, split internally by domain: `auth`, `loads`, `media`, `sync`). **ORM models and Alembic migrations live in the shared `clothesline_db` package** (imported by the API), not inside the domain modules — chosen for maintainability and to let a future second deployable share the schema. The `auth` module does not issue tokens; it validates Zitadel JWTs and keeps a minimal `User {id, sub, email}` mirror (email is the only PII stored). Frontend Vitest unit tests are colocated in `clothesline-web`; Playwright e2e is its own project so it can drive the built PWA including offline flows.
+Backend is a modular monolith (one deployable, split internally by domain: `auth`, `domain`, `media`, `sync`). **ORM models and Alembic migrations live in the shared `clothesline_db` package** (imported by the API), not inside the domain modules — chosen for maintainability and to let a future second deployable share the schema. The `auth` module does not issue tokens; it validates Zitadel JWTs and keeps a minimal `User {id, sub, email}` mirror (email is the only PII stored). Frontend Vitest unit tests are colocated in `clothesline-web`; Playwright e2e is its own project so it can drive the built PWA including offline flows.
 
 ## Diagrams
 

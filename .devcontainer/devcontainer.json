@@ -15,7 +15,7 @@
     },
     "ghcr.io/va-h/devcontainers-features/uv:1": {}
   },
-  "postCreateCommand": "dotnet workload install aspire || true",
+  "postCreateCommand": "dotnet workload install aspire || { echo 'ERROR: Failed to install Aspire workload. Run: dotnet workload install aspire'; exit 1; }",
   "customizations": {
     "vscode": {
       "extensions": [
