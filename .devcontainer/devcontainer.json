@@ -23,7 +23,8 @@
         "dbaeumer.vscode-eslint",
         "esbenp.prettier-vscode",
         "ms-playwright.playwright",
-        "anthropic.claude-code"
+        "anthropic.claude-code",
+        "microsoft-aspire.aspire-vscode"
       ]
     }
   },
