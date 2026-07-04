@@ -168,7 +168,8 @@ Notes:
 The same logical model exists on the client (RxDB, backed by IndexedDB) and the server (Postgres). The client is authoritative during an offline session; the server is authoritative once synced. **Each entity below is also an RxDB collection** of the same snake_case plural name (`loads`, `load_item_categories`, `load_items`, `photos`, `photo_links`) and replicates via `/sync/{collection}` (§5.2, §7); the frontend's RxDB `jsonSchema` for each is **derived from these tables** and lives in `clothesline-web` (not duplicated here).
 
 **Wire/sync convention (applies to every synced entity):**
-- `updated_at` crosses the wire as an **integer epoch-milliseconds** value, **authored by the server** on every write; it drives the replication checkpoint (ordered by `updated_at`, then `id`).
+- **Datetime encoding — ISO 8601 UTC strings, never epoch numbers.** Every datetime that crosses the wire — in a JSON body **or** as a query parameter — is an **ISO 8601 UTC string** with a trailing `Z`, e.g. `"2026-07-04T14:30:05.123Z"` (calendar `YYYY-MM-DDTHH:MM:SS[.sss]Z`). Epoch-millisecond integers are **not** used on the wire — they're unreadable and hard to debug. How datetimes are **stored** in Postgres (`timestamptz`) is an implementation detail and independent of this. (Plain dates, e.g. `Load.send_date`, use `YYYY-MM-DD`.)
+- `updated_at` is **authored by the server** on every write and serialized as the ISO 8601 string above; it drives the replication checkpoint. Ordering is done server-side on the real `timestamptz` column (`ORDER BY updated_at, id`) — the wire string is parsed back to a timestamp — with `id` as the tiebreaker.
 - Soft delete is expressed on the wire as **`_deleted`** (boolean tombstone) mapped from the row's `deleted_at`; deleted rows still replicate.
 - `id` (client-generated uuid) is the primary key and the checkpoint tiebreaker.
 
@@ -326,13 +327,13 @@ The backend is **local-first**, so the surface is small: an **RxDB replication c
 | in (query) | type | notes |
 |---|---|---|
 | `id` | string | checkpoint id; omit on first sync |
-| `updated_at` | number | checkpoint ts (epoch ms); omit on first sync |
+| `updated_at` | string | checkpoint ts as **ISO 8601 UTC** (e.g. `2026-07-04T14:30:05.123Z`); omit on first sync |
 | `batch_size` | number | max docs to return |
 
 ```jsonc
 // 200 — docs written strictly after the checkpoint (incl. _deleted tombstones), user-scoped,
-// ordered by (updated_at ASC, id ASC). Doc shapes per §4.1.
-{ "documents": [ /* <collection> docs */ ], "checkpoint": { "id": "…", "updated_at": 1751600000000 } }
+// ordered by (updated_at ASC, id ASC). Doc shapes per §4.1. All datetimes are ISO 8601 UTC.
+{ "documents": [ /* <collection> docs */ ], "checkpoint": { "id": "…", "updated_at": "2026-07-04T14:30:05.123Z" } }
 ```
 
 `POST /sync/{collection}` — **push** (idempotent upsert by `id`)
@@ -349,8 +350,8 @@ Per row the server: loads the current doc; if it differs from `assumed_master_st
 **Media** (photo bytes never travel through `/sync`)
 | method | path | purpose |
 |---|---|---|
-| POST | `/media/upload-url` | body `{photo_id, content_type}` → `{blob_key, upload_url, expires_at}`. Client PUTs bytes to `upload_url`, then sets `blob_key` on the local `photos` doc (which syncs). |
-| GET | `/media/{photo_id}` | `{url, expires_at}` — short-lived read SAS; user-scoped. |
+| POST | `/media/upload-url` | body `{photo_id, content_type}` → `{blob_key, upload_url, expires_at}` (`expires_at` is ISO 8601 UTC). Client PUTs bytes to `upload_url`, then sets `blob_key` on the local `photos` doc (which syncs). |
+| GET | `/media/{photo_id}` | `{url, expires_at}` (ISO 8601 UTC) — short-lived read SAS; user-scoped. |
 
 **Identity**
 | method | path | purpose |
@@ -461,7 +462,7 @@ PRD success metric is **< 60s to itemize**. Design implications:
 
 1. **Client-generated UUIDs** for every synced collection eliminate create-time id collisions — an offline create (including auto-created items and photo links) is a first-class record, not a temp placeholder.
 2. **Checkpoint** = `{ id, updated_at }`. Pull returns docs written strictly after the checkpoint, ordered by `(updated_at ASC, id ASC)` — `id` is the tiebreaker when timestamps collide.
-3. **Server-authored `updated_at`** — the server sets `updated_at` (epoch ms) on **every** write (DB `now()`/trigger); the client's value is never trusted for ordering. This is what makes checkpoint iteration correct.
+3. **Server-authored `updated_at`** — the server sets `updated_at` on **every** write (DB `now()`/trigger) and serializes it as an **ISO 8601 UTC string** on the wire (§4); the client's value is never trusted for ordering. Ordering runs on the real `timestamptz` column, so checkpoint iteration is correct regardless of string formatting.
 4. **Soft-delete / tombstones** — deletes set `deleted_at`, surfaced on the wire as `_deleted = true` (RxDB `deletedField`), so deletions replicate instead of vanishing. Nothing is hard-deleted.
 5. **Push & conflicts** — push sends `{ new_document_state, assumed_master_state }` rows; the server returns **conflicts only** (the current master doc) when its stored state differs from `assumed_master_state`. RxDB resolves conflicts on the client; for a **single-user** MVP (PRD §5: multi-user out of scope) the default **server-wins / last-write** handler is sufficient — real conflicts are limited to the same user on two devices.
 6. **Invariants at push-time** — business rules (freeze `total_sent` at send, read-only sent manifest, user ownership) are enforced by the per-collection validator; a rejected write is returned **as a conflict**, reverting the illegal local change on the next merge.

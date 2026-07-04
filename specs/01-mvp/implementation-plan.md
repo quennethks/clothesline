@@ -88,7 +88,7 @@ Persistence for the domain, in the shared data package (spec §3, §4, §5.1).
 
 - [ ] Create the **`clothesline_db`** package (uv workspace member): SQLAlchemy 2.x async models `User {id, sub, email}`, `Load`, `LoadItemCategory` (with `count_mode`), `LoadItem`, `Photo`, `PhotoLink` (spec §4.1), with `updated_at`/`deleted_at` for sync.
 - [ ] `PhotoLink` polymorphic junction (`entity_type`/`entity_id`, `is_primary`) with unique `(photo_id, entity_type, entity_id)` + lookup `(entity_type, entity_id)` indexes (spec §4.1).
-- [ ] **Sync-ready columns**: `updated_at` (epoch-ms, **server-authored** via DB default/trigger) + `deleted_at`; per-table index on `(user-scope, updated_at, id)` for ordered pulls (spec §7).
+- [ ] **Sync-ready columns**: `updated_at` (`timestamptz`, **server-authored** via DB default/trigger; serialized as **ISO 8601 UTC** on the wire — never epoch numbers, spec §4) + `deleted_at`; per-table index on `(user-scope, updated_at, id)` for ordered pulls (spec §7).
 - [ ] Alembic migration project **inside `clothesline_db`**; initial migration creates the schema. (Execution is a pipeline step, not an ACA job — spec §11.2.)
 - [ ] Client-generated UUID PKs accepted on write (spec §7).
 - [ ] Static category **template** (spec §4.3) shared as config on server (validation) and client (offline seed).
