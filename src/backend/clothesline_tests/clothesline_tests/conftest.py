@@ -11,10 +11,11 @@ import pytest_asyncio
 from alembic import command
 from alembic.config import Config
 from clothesline_api.auth import jwks as jwks_module
+from clothesline_api.auth.dependencies import get_current_user
 from clothesline_api.common.deps import get_db_session
 from clothesline_api.config import settings as api_settings
 from clothesline_api.main import app
-from clothesline_db.models import Base
+from clothesline_db.models import Base, User
 from clothesline_db.session import async_session_factory, create_db_engine
 from cryptography.hazmat.primitives.asymmetric import rsa
 from httpx import ASGITransport, AsyncClient
@@ -124,3 +125,72 @@ async def client(db_session: AsyncSession) -> AsyncIterator[AsyncClient]:
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
     app.dependency_overrides.pop(get_db_session, None)
+
+
+PLACEHOLDER_TS = "2026-01-01T00:00:00.000Z"
+
+
+def load_doc(load_id: str, user_id: object, **overrides: object) -> dict[str, object]:
+    """A full loads wire doc for sync push tests. created_at/updated_at are
+    placeholders the server ignores (it authors its own, spec §4) — only
+    included because RxDB always pushes the full local document."""
+    doc: dict[str, object] = {
+        "id": load_id,
+        "user_id": str(user_id),
+        "name": "test-load",
+        "shop_name": None,
+        "shop_location": None,
+        "send_date": None,
+        "status": "draft",
+        "total_sent": 0,
+        "total_received": None,
+        "reconciled": False,
+        "created_at": PLACEHOLDER_TS,
+        "updated_at": PLACEHOLDER_TS,
+        "_deleted": False,
+    }
+    doc.update(overrides)
+    return doc
+
+
+async def push_create(
+    client: AsyncClient, collection: str, doc: dict[str, object]
+) -> list[dict[str, object]]:
+    resp = await client.post(
+        f"/sync/{collection}", json=[{"new_document_state": doc, "assumed_master_state": None}]
+    )
+    assert resp.status_code == 200
+    return resp.json()  # type: ignore[no-any-return]
+
+
+async def push_update(
+    client: AsyncClient,
+    collection: str,
+    new_state: dict[str, object],
+    assumed_master_state: dict[str, object],
+) -> list[dict[str, object]]:
+    resp = await client.post(
+        f"/sync/{collection}",
+        json=[{"new_document_state": new_state, "assumed_master_state": assumed_master_state}],
+    )
+    assert resp.status_code == 200
+    return resp.json()  # type: ignore[no-any-return]
+
+
+@pytest_asyncio.fixture
+async def test_user(db_session: AsyncSession) -> User:
+    user = User(sub="zitadel|sync-test-user", email="sync-test@example.com")
+    db_session.add(user)
+    await db_session.commit()
+    return user
+
+
+@pytest_asyncio.fixture
+async def authed_client(client: AsyncClient, test_user: User) -> AsyncIterator[AsyncClient]:
+    # Most sync tests bypass real JWT mechanics for speed (spec §10.1) —
+    # test_sync_requires_auth.py is the one test exercising the real
+    # get_current_user dependency end-to-end via the `client`/`fake_jwks`
+    # fixtures instead of this override.
+    app.dependency_overrides[get_current_user] = lambda: test_user
+    yield client
+    app.dependency_overrides.pop(get_current_user, None)

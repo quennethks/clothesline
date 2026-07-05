@@ -8,6 +8,7 @@ import { Gallery } from './routes/Gallery'
 import { Home } from './routes/Home'
 import { LoadDetail } from './routes/LoadDetail'
 import { Receive } from './routes/Receive'
+import { SyncStatusIndicator } from './sync/SyncStatusIndicator'
 
 function ReceiveRoute() {
   const { id } = useParams<{ id: string }>()
@@ -28,6 +29,7 @@ function CheckoffRoute() {
 function AuthenticatedApp() {
   return (
     <DbProvider>
+      <SyncStatusIndicator />
       <Routes>
         <Route path="/" element={<Home />} />
         <Route path="/loads/:id" element={<LoadDetail />} />
