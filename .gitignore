@@ -19,6 +19,7 @@ bin/
 obj/
 *.user
 **/.aspire/
+.aspire-out/
 
 # OS / editor
 .DS_Store

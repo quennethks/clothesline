@@ -1,5 +1,17 @@
 FirstInstance:
   Org:
+    # A Machine user defined directly under Org (as opposed to under
+    # LoginClient) is automatically granted the IAM_OWNER role — used by
+    # ops/zitadel/bootstrap_oidc_app.py to create the clothesline-web OIDC
+    # application via the Management API (there is no declarative
+    # FirstInstance.Org.Projects/OIDCApps section — apps must be created
+    # through the API, not this bootstrap file).
+    Machine:
+      Machine:
+        Username: clothesline-admin
+        Name: Automatically Initialized Clothesline Admin
+      Pat:
+        ExpirationDate: "2519-04-01T08:45:00Z"
     LoginClient:
       Machine:
         Username: login-client
