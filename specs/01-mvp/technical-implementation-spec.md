@@ -39,7 +39,11 @@ The system is described from two viewpoints: how it runs **locally** under a sin
 
 ### 2.1 Local architecture (`aspire run`)
 
-Locally, the Aspire AppHost boots the whole graph as containers/processes with one command and a single dashboard. There is **no TLS termination or reverse-proxy hop** in dev — Zitadel runs in plain-HTTP mode (`ExternalSecure=false`), and one Postgres server hosts two databases (app + zitadel) for simplicity. Outbound email (Zitadel's OTP codes) is captured by **Mailpit** so nothing is actually sent.
+Locally, the Aspire AppHost boots the whole graph as containers/processes with one command and a single dashboard. One Postgres server hosts two databases (app + zitadel) for simplicity, and outbound email (Zitadel's OTP codes) is captured by **Mailpit** so nothing is actually sent.
+
+Zitadel core and its **Login V2** UI do sit behind a small local reverse proxy (`identity-proxy`, Caddy) — this mirrors the production single-origin requirement (§5.6(a)) rather than being dev-only scaffolding: Login V2's redirects are same-origin-relative and its backend calls back to Zitadel core need a `Host` header that matches Zitadel's configured domain, neither of which holds if the two are reachable on two bare ports with nothing unifying them. `identity-proxy` is the only one of the two host-exposed on a fixed port; Zitadel core and Login V2 are reachable only via the container network. See [`fixes/2026-07-05-codespaces-oidc-signin.md`](./fixes/2026-07-05-codespaces-oidc-signin.md) for the full diagnostic story.
+
+Under **GitHub Codespaces**, `apphost.cs` also auto-detects the Codespaces forwarded-URL pattern (from GitHub's own injected env vars — no setup required) and derives the OIDC issuer, Zitadel's `ExternalDomain`/`ExternalSecure`/`ExternalPort`, redirect URIs, and CORS origin from it; outside Codespaces these all fall back to plain `localhost`.
 
 ```mermaid
 flowchart TB
@@ -49,18 +53,21 @@ flowchart TB
         web["web<br/>Vite dev server"]
         api["api<br/>Uvicorn --reload"]
         mig["clothesline_db migration<br/>alembic upgrade (run once at startup)"]
-        zitadel["Zitadel core<br/>plain HTTP, ExternalSecure=false"]
-        loginv2["Zitadel Login V2<br/>:3000, /ui/v2/login"]
+        proxy["identity-proxy<br/>Caddy · single origin<br/>only identity port host-exposed"]
+        zitadel["Zitadel core<br/>ExternalSecure = isCodespaces<br/>container-network only"]
+        loginv2["Zitadel Login V2<br/>/ui/v2/login · container-network only"]
         pg[("PostgreSQL<br/>2 databases: app + zitadel")]
         azurite[("Azurite<br/>Blob emulator")]
         mailpit["Mailpit<br/>OTP email sink"]
     end
 
     dev -->|app UI| web
-    dev -->|OIDC login| loginv2
-    loginv2 -->|Session API| zitadel
+    dev -->|OIDC login| proxy
+    proxy -->|"/ui/v2/login/*"| loginv2
+    proxy -->|everything else| zitadel
+    loginv2 -->|Session API, via proxy| proxy
     web -->|HTTP/JSON · sync| api
-    api -->|validate JWT via JWKS| zitadel
+    api -->|validate JWT via JWKS, via proxy| proxy
     api --> pg
     api --> azurite
     mig --> pg
@@ -394,7 +401,7 @@ Identity is delegated entirely to a **self-hosted Zitadel** OIDC server. Our cod
 - **API validation.** The API validates the bearer **access token against Zitadel's JWKS** (issuer + audience checks) on every request. No introspection round-trip on the hot path.
 - **Local user mirror.** On the first authenticated request, the API upserts `User {id, sub, email}` from the token claims; `email` is refreshed on subsequent logins so it can't drift. This is the only PII we persist.
 - **Offline.** Tokens are persisted client-side (IndexedDB) so an installed PWA stays authenticated through offline sessions (PRD §4.1: zero re-auth friction); access tokens are short-lived and refreshed on reconnect. Tradeoff noted in §9.
-- **Local dev.** Zitadel core + Login V2 run as containers under Aspire (plain HTTP); OTP emails are captured by **Mailpit** (§10.3), so passwordless sign-in is fully exercisable offline of any real mail provider.
+- **Local dev.** Zitadel core + Login V2 run as containers under Aspire, behind a local single-origin reverse proxy (`identity-proxy`, §2.1); OTP emails are captured by **Mailpit** (§10.3), so passwordless sign-in is fully exercisable offline of any real mail provider.
 
 ### 5.6 Zitadel self-hosting requirements on Azure Container Apps
 
@@ -405,6 +412,8 @@ Since Zitadel v4, the login UI is **Login V2**, a standalone **Next.js applicati
 
 Zitadel expects the core and the login app to be served under a **single origin with path-based routing** (`/ui/v2/login` → Login V2, everything else → Zitadel core) so the OIDC flow and session cookies stay same-origin. Because **ACA gives each Container App its own FQDN and does not path-route across apps**, the identity environment adds a **path-routing layer — Azure Application Gateway or Azure Front Door** — that presents one identity domain and splits traffic between the two backends.
 Sources: [ZITADEL — Login App](https://zitadel.com/docs/guides/integrate/login-ui/login-app) · [ZITADEL — Connect self-hosted Login UI (login-client)](https://zitadel.com/docs/self-hosting/manage/login-client) · [ACA — transport protocols](https://learn.microsoft.com/azure/container-apps/connect-apps#transport-protocols) · [ACA — ingress settings](https://learn.microsoft.com/azure/container-apps/ingress-how-to#ingress-settings)
+
+This single-origin requirement isn't ACA-specific — local dev now mirrors it too (§2.1's `identity-proxy`), after discovering the hard way that Login V2's relative redirects and its backend calls back to Zitadel core both break without it. See [`fixes/2026-07-05-codespaces-oidc-signin.md`](./fixes/2026-07-05-codespaces-oidc-signin.md) for the two extra header-rewriting subtleties (`X-Forwarded-Host`, `x-zitadel-public-host`/`x-zitadel-instance-host`) that App Gateway/Front Door will also need to get right at deploy time.
 
 **(b) TLS termination + HTTP/2 (h2c) for gRPC.**
 ACA terminates TLS at ingress, so Zitadel runs in **external-TLS mode**: `ExternalSecure=true`, `TLS_ENABLED=false`, `ExternalPort=443`, `ExternalDomain=<identity custom domain>`. Zitadel serves its management/admin APIs and console over **gRPC (HTTP/2)** and expects the proxy to forward **h2c (cleartext HTTP/2)**, so the ACA ingress **`transport` must be set to `http2`** (the default `auto` is not sufficient for gRPC end-to-end). Additional requirements:
@@ -598,7 +607,8 @@ If two environments prove more cost than the MVP justifies, Zitadel core + Login
 ## 12. Local development
 
 - Open the repo in the **Dev Container** (`.devcontainer/`) — provides Python 3.12 + `uv`, Node.js, the .NET SDK + Aspire workload, and Docker access.
-- One command (`aspire run`) starts the full graph — including Zitadel core + Login V2 and Mailpit — so passwordless sign-in works end-to-end with no cloud dependencies; the PWA hot-reloads via Vite, the API via Uvicorn `--reload`.
+- One command (`aspire run`) starts the full graph — including Zitadel core + Login V2 behind the local `identity-proxy` (§2.1), and Mailpit — so passwordless sign-in works end-to-end with no cloud dependencies; the PWA hot-reloads via Vite, the API via Uvicorn `--reload`.
+- **Running in a GitHub Codespace:** `apphost.cs` auto-detects it and rewrites the OIDC issuer/redirect URIs to the Codespaces forwarded-URL pattern (§2.1) — no manual config needed. The one manual step: set `identity-proxy`'s forwarded port to **Public** visibility in the Ports panel (it serves unauthenticated first-time sign-in requests, so a background browser fetch to a Private port gets blocked at GitHub's edge). See [`fixes/2026-07-05-codespaces-oidc-signin.md`](./fixes/2026-07-05-codespaces-oidc-signin.md) if sign-in ever breaks again.
 - See `CLAUDE.md` at the repo root for the authoritative dev/orchestration notes.
 
 ---

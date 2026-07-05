@@ -37,6 +37,8 @@ aspire run
 
 This opens the Aspire dashboard with logs, traces, and metrics for every service.
 
+**Running in a GitHub Codespace:** before signing in, set the forwarded **`identity-proxy`** port to **Public** visibility in the Ports panel (Ports tab → right-click the port → Port Visibility → Public). It serves unauthenticated first-time sign-in requests, and a background browser fetch to a Private port gets silently blocked at GitHub's edge — see [`specs/01-mvp/fixes/2026-07-05-codespaces-oidc-signin.md`](./specs/01-mvp/fixes/2026-07-05-codespaces-oidc-signin.md) if sign-in still fails after that.
+
 ### Running tests
 
 ```bash
