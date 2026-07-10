@@ -354,6 +354,8 @@ The backend is **local-first**, so the surface is small: an **RxDB replication c
 ```
 Per row the server: loads the current doc; if it differs from `assumed_master_state` → **conflict** (return current master, don't apply); else applies the write, **sets `updated_at` = server now**, maps `_deleted → deleted_at`, and runs the **per-collection validator** (ownership + invariants). Invariant violations are returned **as conflicts** (authoritative doc back) so an illegal local write is reverted on the next merge.
 
+> **"Differs" means the replicated content differs** — `id`, the collection's own columns, and `_deleted`. It **excludes `created_at`/`updated_at`**, which are server-authored (§7.3). RxDB never re-pulls between writes: after a successful push it records *the document it sent* as the assumed master state, so `assumed_master_state` always carries the **client's** timestamps. Comparing whole documents would therefore make the **second write to every document** a false conflict, and the default conflict handler (master wins) would silently revert the local change.
+
 > The live **pull-stream (SSE)** is **deferred to Phase 3**; MVP uses pull-on-reconnect + interval polling (§7).
 
 **Media** (photo bytes never travel through `/sync`)
@@ -485,7 +487,7 @@ Clothesline is a **web app**, so it must be usable on large screens as well as p
 
 1. **Client-generated UUIDs** for every synced collection eliminate create-time id collisions — an offline create (including auto-created items and photo links) is a first-class record, not a temp placeholder.
 2. **Checkpoint** = `{ id, updated_at }`. Pull returns docs written strictly after the checkpoint, ordered by `(updated_at ASC, id ASC)` — `id` is the tiebreaker when timestamps collide.
-3. **Server-authored `updated_at`** — the server sets `updated_at` on **every** write (DB `now()`/trigger) and serializes it as an **ISO 8601 UTC string** on the wire (§4); the client's value is never trusted for ordering. Ordering runs on the real `timestamptz` column, so checkpoint iteration is correct regardless of string formatting.
+3. **Server-authored `updated_at`** — the server sets `updated_at` on **every** write (DB `now()`/trigger) and serializes it as an **ISO 8601 UTC string** on the wire (§4); the client's value is never trusted for ordering. Ordering runs on the real `timestamptz` column, so checkpoint iteration is correct regardless of string formatting. The corollary is that a pushed doc does **not** round-trip byte-for-byte, so `created_at`/`updated_at` are excluded from push-time conflict detection (§5.2).
 4. **Soft-delete / tombstones** — deletes set `deleted_at`, surfaced on the wire as `_deleted = true` (RxDB `deletedField`), so deletions replicate instead of vanishing. Nothing is hard-deleted.
 5. **Push & conflicts** — push sends `{ new_document_state, assumed_master_state }` rows; the server returns **conflicts only** (the current master doc) when its stored state differs from `assumed_master_state`. RxDB resolves conflicts on the client; for a **single-user** MVP (PRD §5: multi-user out of scope) the default **server-wins / last-write** handler is sufficient — real conflicts are limited to the same user on two devices.
 6. **Invariants at push-time** — business rules (freeze `total_sent` at send, read-only sent manifest, user ownership) are enforced by the per-collection validator; a rejected write is returned **as a conflict**, reverting the illegal local change on the next merge.

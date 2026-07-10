@@ -16,6 +16,24 @@ from clothesline_api.sync.schemas import row_to_wire
 _APPLIED = object()
 
 
+def _replicated_content(
+    doc: dict[str, Any] | None, collection: SyncCollection
+) -> dict[str, Any] | None:
+    """A doc reduced to the fields both sides agree on: id, the collection's
+    own columns, and the `_deleted` tombstone flag.
+
+    `created_at`/`updated_at` are excluded because they are server-authored
+    (spec §7.3): after a successful push RxDB records the doc *it sent* as the
+    assumed master state, so its assumption always carries the client's
+    timestamps, not the server's. Comparing those would make the second write
+    to every document a false conflict, which RxDB resolves by dropping the
+    local change (default handler: master wins).
+    """
+    if doc is None:
+        return None
+    return {key: doc.get(key) for key in ("id", *collection.fields, "_deleted")}
+
+
 async def handle_push(
     session: AsyncSession,
     collection_name: str,
@@ -52,7 +70,9 @@ async def _apply_one(
     # doesn't match what the client assumed, don't apply — return the
     # current master doc as a conflict so RxDB resolves it on the client.
     current_wire = row_to_wire(existing, collection.fields) if existing is not None else None
-    if current_wire != assumed_master_state:
+    if _replicated_content(current_wire, collection) != _replicated_content(
+        assumed_master_state, collection
+    ):
         return current_wire
 
     def _identity(value: object) -> object:

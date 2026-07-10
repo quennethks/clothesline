@@ -133,7 +133,9 @@ PLACEHOLDER_TS = "2026-01-01T00:00:00.000Z"
 def load_doc(load_id: str, user_id: object, **overrides: object) -> dict[str, object]:
     """A full loads wire doc for sync push tests. created_at/updated_at are
     placeholders the server ignores (it authors its own, spec §4) — only
-    included because RxDB always pushes the full local document."""
+    included because RxDB always pushes the full local document, and so they
+    are also absent from the assumed-master comparison (see push.py's
+    _replicated_content)."""
     doc: dict[str, object] = {
         "id": load_id,
         "user_id": str(user_id),
