@@ -17,8 +17,8 @@ The defining technical constraints from the PRD, and the decisions that resolve 
 
 | PRD constraint / open question | Decision (this spec) |
 |---|---|
-| On-device vs. cloud classification (OQ1) | **On-device.** MediaPipe/TF.js in the browser. Only the *first* entry into Scan Mode needs a network to download + cache the model; every scan afterward runs fully offline, preserving the offline-first hard requirement. Zero per-scan cost. |
-| Category list stability (OQ2) / training data (OQ5) | **A garment detector trained via MediaPipe Model Maker on the Fashionpedia dataset (CC BY 4.0), covering an AI-supported subset + manual fallback for the rest.** Verification showed **no** commercially-licensed, MediaPipe-compatible, real-time clothing detector exists off-the-shelf (§6.3), so the model is a **first-class Phase 2 deliverable**, not a deferred fallback. Laundry categories the model doesn't cover (towels, bedsheets, underwear, socks) stay on the Phase 1 tap-counter *in the same load* (mixed-mode). |
+| On-device vs. cloud classification (OQ1) | **On-device.** **TensorFlow.js** in the browser. Only the *first* entry into Scan Mode needs a network to download + cache the model; every scan afterward runs fully offline, preserving the offline-first hard requirement. Zero per-scan cost. |
+| Category list stability (OQ2) / training data (OQ5) | **A garment detector trained on the Fashionpedia dataset (CC BY 4.0) and exported to TensorFlow.js graph-model format, covering an AI-supported subset + manual fallback for the rest.** Verification showed **no** commercially-licensed, real-time, per-category clothing detector exists off-the-shelf (§6.3), so the model is a **first-class Phase 2 deliverable**, not a deferred fallback. Laundry categories the model doesn't cover (towels, bedsheets, underwear, socks) stay on the Phase 1 tap-counter *in the same load* (mixed-mode). |
 | Double-count in live stream (OQ7) | **Within-session frame-to-frame object tracking** (bounding-box IoU / centroid), not perceptual-hash dedup. Correctly counts six identical socks as six; a lingering garment is counted once. **No cross-session image comparison.** |
 | Detection pipeline shape | **A single clothing-trained object detector** (detection + category + bounding box in one pass), not a generic COCO presence-gate feeding a separate classifier. One model asset to cache; its bounding boxes feed the tracker directly. |
 | Session boundaries (OQ8) | **Explicit start/stop** with an inactivity auto-pause. |
@@ -29,8 +29,8 @@ The defining technical constraints from the PRD, and the decisions that resolve 
 | Concern | Choice |
 |---|---|
 | Inference runtime | On-device, WebAssembly + WebGL, in the PWA |
-| Detection library | **MediaPipe Tasks Vision** `ObjectDetector` (VIDEO running mode); model architecture constrained to EfficientDet/SSD-family TFLite (§6.1) |
-| Model | **EfficientDet-Lite** garment detector, trained via **MediaPipe Model Maker** on **Fashionpedia (CC BY 4.0)**; served as a **self-hosted** static asset, cached for offline (§6.3, §5.7) |
+| Inference runtime | **TensorFlow.js** — WebGL (GPU) backend primary, WASM (CPU) fallback; runs a converted graph model in-browser (§6.1) |
+| Model | Lightweight **SSD-MobileNet / EfficientDet-Lite-class** garment detector, trained on **Fashionpedia (CC BY 4.0)** and exported to **TensorFlow.js graph-model** format; self-hosted static asset, cached for offline (§6.3, §5.7) |
 | Double-count control | Within-session object tracker (IoU/centroid track IDs), §5.3 |
 | New backend | **None** — new fields ride existing `/sync/{collection}`; photo bytes ride existing `/media` → Blob |
 | New data | Columns on `load_item_categories` + `load_items`; no new tables |
@@ -65,7 +65,7 @@ Phase 2 adds **no new deployable and no new backing resource.** The cloud and lo
 flowchart TB
     subgraph web["clothesline-web (PWA) — all new Phase 2 code is here"]
         cam["Camera loop<br/>getUserMedia → &lt;video&gt; → &lt;canvas&gt; + rAF (throttled)"]
-        det["On-device detector<br/>MediaPipe ObjectDetector (VIDEO)<br/>single clothing model"]
+        det["On-device detector<br/>TensorFlow.js (WebGL backend)<br/>single clothing model"]
         trk["Object tracker<br/>frame-to-frame IoU/centroid track IDs<br/>count-once-per-track"]
         rev["Confidence gate + review<br/>auto-accept high / confirm low / fallback fail"]
         rx[("RxDB (IndexedDB)<br/>load_item_categories · load_items · photos · photo_links")]
@@ -214,19 +214,19 @@ Scan Mode and the Phase 1 tap-counter **coexist on the same load**. A user can s
 
 | # | Component | What it is | Naïve (offline-breaking) source | How we make it offline |
 |---|---|---|---|---|
-| 1 | **App shell + JS glue** | The React app, Scan-Mode code, and the `@mediapipe/tasks-vision` JS bindings | Bundled into the app | **Already precached** by the PWA service worker (Phase 1 §6.4) — no change. |
-| 2 | **MediaPipe WASM runtime** | The compiled inference engine — `vision_wasm_internal.{js,wasm}` (+ the no-SIMD variant) — that actually *executes* the model | `FilesetResolver.forVisionTasks('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/wasm')` → **the public internet** | **Self-host:** copy the `wasm/` folder out of the `@mediapipe/tasks-vision` npm package into our served assets and pass a **local `basePath`**, e.g. `FilesetResolver.forVisionTasks('/mediapipe/wasm')`. Precache those files in the service worker. |
-| 3 | **The model** | The EfficientDet-Lite `.tflite` garment detector (§6) with its label map embedded as TFLite metadata | A static asset URL | Served by `clothesline-web`; **lazily downloaded on first Scan-Mode entry** and stored via the **Cache API** so it persists across sessions and offline. |
+| 1 | **App shell + TF.js library** | The React app, Scan-Mode code, and the **TensorFlow.js** library itself | Bundled into the app | **Already precached** by the PWA service worker (Phase 1 §6.4) — no change. |
+| 2 | **The runtime backend** | The engine that *executes* the model. On the **WebGL (GPU) backend** this is the browser's built-in graphics API — **nothing extra to download.** *Only* if we enable the **WASM (CPU) fallback** backend does TensorFlow.js need its `tfjs-backend-wasm` `.wasm` files. | The WASM-backend files default to a **CDN** (jsDelivr) | WebGL backend: nothing to do. WASM fallback: **self-host** the `tfjs-backend-wasm` `.wasm` files and point TF.js at them with `setWasmPaths('/tfjs/wasm/')`, then precache them. |
+| 3 | **The model** | The garment detector as a **TensorFlow.js graph model** — `model.json` (architecture + weight manifest) **+ the weight `.bin` shards** — plus a tiny **`labels.json`** (§6.2) | Static asset URLs | Served by `clothesline-web`; **lazily downloaded on first Scan-Mode entry** and stored via the **Cache API** so it persists across sessions and offline. |
 
-- **The seed reference doc uses the CDN `FilesetResolver` URL for component 2.** That call hits the network *every time the detector initializes*, so **offline it throws and Scan Mode won't start even when the model (component 3) is already cached** — the model can't run without the engine that runs it. Self-hosting the WASM fileset behind a local `basePath` is the fix, and MediaPipe's `FilesetResolver` API explicitly supports a custom base path for exactly this.
-- **SIMD variants:** `FilesetResolver` probes for WASM-SIMD support and loads *either* the SIMD or the no-SIMD binary at runtime, so the self-hosted `wasm/` folder must include **both** variants and the service worker must cache both (we can't know the device's support at build time).
-- **First-run cost & when it downloads:** components **2 + 3** total roughly **8–12 MB** — the WASM runtime is a few MB; the model is small (**EfficientDet-Lite0 ≈ 3.2 MB**, **Lite2 ≈ 5.3 MB**). They are **not** precached into the app shell (that would bloat first paint); they download on **first entry into Scan Mode** behind a one-time **"Preparing scanner…"** state, then live in cache. After that, **Scan Mode runs fully offline** (§8). This confines the PRD's "may need a connection for scan" exception to **first use only**.
+- **Why the WebGL backend is the simpler default:** unlike a WASM-based engine, the WebGL backend runs on the phone's existing graphics stack, so there is **no separate multi-MB inference engine to self-host** — component 2 disappears on the happy path. This is a real offline advantage of the TensorFlow.js/WebGL route.
+- **The CDN trap still applies to the WASM fallback.** If we ship the WASM (CPU) backend for devices without usable WebGL, its `.wasm` files load from jsDelivr by default — that call hits the network and **breaks offline**. Self-host them and set `setWasmPaths()` to a local path, then precache. (Same class of bug as any CDN-loaded runtime; it just now only affects the optional CPU fallback.)
+- **First-run cost & when it downloads:** the only mandatory first-run download is **component 3** — the graph model — typically **~3–8 MB** (a mobile SSD-MobileNet / EfficientDet-Lite-class detector: `model.json` + weight shards). It is **not** precached into the app shell (that would bloat first paint); it downloads on **first entry into Scan Mode** behind a one-time **"Preparing scanner…"** state, then lives in cache. After that, **Scan Mode runs fully offline** (§8). This confines the PRD's "may need a connection for scan" exception to **first use only**.
 
-### 5.8 Memory, device tiers, and iOS
+### 5.8 Memory and device tiers
 
-- **WebGL/GPU memory discipline:** MediaPipe manages its own WASM memory, but any TF.js post-processing must wrap per-frame tensors in `tf.tidy()` and `.dispose()` final tensors, watching `tf.memory().numTensors` in dev. Uncontrolled tensors crash a mobile tab within minutes — a hard build rule.
-- **Device floor & degradation:** design target is **mid-range Android**. On slower devices, degrade gracefully — increase the `throttle` interval and/or lower capture resolution — rather than dropping frames unpredictably. High-end devices may lower `throttle` for snappier counting.
-- **iOS Safari is an explicit validation risk, not an assumption.** iOS Safari is historically the weakest surface for in-browser MediaPipe (WebGL/GPU-delegate quirks, tighter WASM memory ceilings, standalone-PWA camera edge cases). Since the PWA already targets iOS Safari 14.3+ for `getUserMedia`, Scan Mode must be **proven on real iOS hardware** during build — including sustained inference without tab reloads — not assumed to match Android. If on-device scan proves unviable on target iPhones, the fallback is a **capability check** that keeps manual itemization on iOS while Android gets scan (tracked as an open risk, §13).
+- **GPU/tensor memory discipline (hard rule):** TensorFlow.js tensors live in GPU memory and are **not** garbage-collected — every per-frame tensor must be wrapped in `tf.tidy()` and final tensors `.dispose()`d, watching `tf.memory().numTensors` in dev. Leaked tensors crash a mobile browser tab within minutes on a live frame loop; this is the single most important implementation rule for Scan Mode.
+- **Device floor & degradation:** the audience is **Android-majority**, so the design target is **mid-range Android** and the model/throttle are tuned for it. On slower devices, degrade gracefully — increase the `throttle` interval and/or lower capture resolution — rather than dropping frames unpredictably. High-end devices may lower `throttle` for snappier counting. Final model choice and thresholds are settled by a **bake-off on real low-end/mid-range Android phones** (§6.3, §11.3).
+- **Backend selection:** prefer the **WebGL (GPU) backend** for speed; fall back to the **WASM (CPU) backend** where WebGL is unavailable/blocked (§5.7). TensorFlow.js runs on **both Android and iOS** browsers, so the minority of iOS users are covered by the same code path — validate on a representative device of each during the bake-off, but iOS is **not** a special-cased risk here.
 
 ### 5.9 Session lifecycle (PRD OQ8)
 
@@ -239,9 +239,10 @@ Scan Mode and the Phase 1 tap-counter **coexist on the same load**. A user can s
 
 ### 6.1 Runtime & pipeline shape
 
-- MediaPipe **Tasks Vision** `ObjectDetector` in `runningMode: 'VIDEO'`, via WASM + WebGL, fully offline once the three §5.7 components are cached. One model does **presence + category + bounding box** in a single pass — the box feeds the §5.3 tracker directly. No generic COCO presence-gate + separate classifier (COCO has no garment classes and buys nothing here).
-- **Per-frame only:** MediaPipe's JS `ObjectDetector` returns independent detections each frame with **no built-in cross-frame tracking**. The object identity/dedup needed to count is therefore **our own tracker (§5.3), by design** — not a wheel we're reinventing.
-- **Model architecture is fixed by the runtime.** `ObjectDetector` loads **only EfficientDet/SSD-family TFLite** carrying **mandatory TFLite Model Metadata (including the label map)** — a model without that metadata fails to load rather than degrading. This is *why* a YOLO/DETR community model can't be dropped in as-is, and it constrains sourcing (§6.3).
+- **TensorFlow.js**, loading a converted **graph model** via `tf.loadGraphModel('/models/garment/model.json')`, run on the **WebGL (GPU) backend** (WASM/CPU fallback, §5.7). One model does **presence + category + bounding box** in a single pass — the box feeds the §5.3 tracker directly. No generic COCO presence-gate + separate classifier (COCO has no garment classes and buys nothing here).
+- **Per-frame → we own tracking.** The detector classifies each frame independently; there is **no built-in cross-frame tracking** in the runtime. The object identity/dedup needed to *count* is therefore **our own tracker (§5.3), by design.**
+- **We own the pre/post-processing** (the flip side of TensorFlow.js's flexibility, vs. a turnkey task API): the frame is resized/normalized into an input tensor, and the raw model outputs are decoded into `{bbox, category, score}[]` — including **non-max suppression** via `tf.image.nonMaxSuppression`. This is standard TF.js object-detection wiring (the same pattern as the `coco-ssd` model), just against our garment model.
+- **Model format & labels.** The runtime loads a TensorFlow.js **graph model** (`model.json` + weight `.bin` shards, §5.7). Class labels are **not** embedded in the model — they ship as a small side **`labels.json`** the app maps to category strings (§6.2). This is looser than a metadata-carrying TFLite file and removes the metadata-compatibility trap that a MediaPipe-style runtime imposes.
 
 ### 6.2 Category mapping & the AI-supported subset
 
@@ -259,28 +260,28 @@ Categories **out of scope for scan** — driven by manual tap-count in the same 
 Underwear, Socks, Towels, Bedsheets, Other
 ```
 
-A **label-map** (embedded in the model's TFLite metadata, plus a thin app-side alias table) translates raw model labels to these strings, so the mapping changes with the model without touching app logic. The exact supported set and thresholds are finalized against the model's real accuracy in the device bake-off (§5.8, §11.3); the *mechanism* (map supported labels, manual-fallback the rest) is fixed.
+A **label-map** — the model's side `labels.json` (§6.1) plus a thin app-side alias table — translates raw model labels to these strings, so the mapping changes with the model without touching app logic. The exact supported set and thresholds are finalized against the model's real accuracy in the device bake-off (§5.8, §11.3); the *mechanism* (map supported labels, manual-fallback the rest) is fixed.
 
 ### 6.3 Model sourcing & production (PRD OQ2 / OQ5)
 
-Verification against the community catalogs (Roboflow Universe, Hugging Face) established that **no off-the-shelf clothing detector clears all four required gates at once** — a commercially usable license, a MediaPipe-compatible runtime, mobile-real-time performance, and per-category granularity:
+Verification against the community catalogs (Roboflow Universe, Hugging Face) established that **no off-the-shelf clothing detector clears all four required gates at once** — a commercially usable license, real-time performance on mid-range mobile, per-category granularity, and a form we can run under TensorFlow.js:
 
 | Community option | Why it fails a gate |
 |---|---|
 | **Ultralytics YOLOv8/v5** clothing detectors (the most common on Roboflow/HF) | **License:** AGPL-3.0 — unusable in a closed-source product without open-sourcing all of Clothesline or buying an enterprise license. |
-| **DETR / YOLOS** fashion detectors (Apache-2.0) | **Runtime + perf:** not loadable by MediaPipe `ObjectDetector`; transformer detectors are heavy for real-time mobile; and their labels collapse "bottoms" (no trousers/shorts split). |
+| **DETR / YOLOS** fashion detectors (Apache-2.0) | **Perf + granularity:** transformer detectors are heavy for real-time mobile (convertible to TF.js, but the frame rate won't hold on mid-range Android), and their labels collapse "bottoms" (no trousers/shorts split). |
 | **DeepFashion2**-trained models (best granularity) | **License:** the dataset is **non-commercial research only** — no commercial models permitted. |
 
-**Decision — build the model, don't grab weights.** Train an **EfficientDet-Lite** detector with **MediaPipe Model Maker** (transfer learning) on the **Fashionpedia** dataset:
+**Decision — build the model, don't grab weights.** Train a lightweight **SSD-MobileNet / EfficientDet-Lite-class** detector (transfer learning) on the **Fashionpedia** dataset and export it to **TensorFlow.js graph-model** format:
 
 - **Fashionpedia is CC BY 4.0 → commercial use is permitted** (with attribution), and its ontology covers *and separates* the supported subset (§6.2).
-- **Model Maker exports MediaPipe-compatible TFLite with the metadata + label map baked in automatically** — so component 3 (§5.7) is runtime-ready with no manual metadata surgery. This is exactly the step that trips up raw Roboflow/YOLO exports (§6.1).
-- Transfer learning needs only a modest labeled slice (Model Maker guidance ≈ 100+ images/class); Fashionpedia supplies far more. **EfficientDet-Lite0/Lite2** are the size/latency sweet spot for mobile (§5.7).
+- **Production pipeline:** fine-tune the detector in TensorFlow/Keras, export a SavedModel, then convert to a browser graph model with **`tensorflowjs_converter`** (`model.json` + weight shards). Ship class names as a side **`labels.json`** (§6.1). A light-CNN detector of this class is the size/latency sweet spot for mobile (§5.7) and runs GPU-accelerated on the TF.js WebGL backend.
+- Transfer learning needs only a modest labeled slice (≈ 100+ images/class is a common floor); Fashionpedia supplies far more.
 - **License hygiene:** ship Fashionpedia's CC BY 4.0 attribution in the app's third-party notices; the trained weights are ours to use commercially.
 
-So Phase 2 treats the garment model as a **first-class deliverable** (dataset → Model Maker → validated `.tflite`), **not** a "deferred fine-tune." The model is a **self-hosted static asset** (§5.7), so upgrading it is a redeploy, not an app rewrite. Model choice (Lite0 vs. Lite2), the final class set, and thresholds are settled by a **device bake-off** (§5.8, §11.3) on target hardware.
+So Phase 2 treats the garment model as a **first-class deliverable** (dataset → train → convert → validated graph model), **not** a "deferred fine-tune." The model is a **self-hosted static asset** (§5.7), so upgrading it is a redeploy, not an app rewrite. Backbone/input-size choice, the final class set, and thresholds are settled by a **device bake-off** (§5.8, §11.3) on target hardware.
 
-**Two things still to validate at build (couldn't be settled from docs alone):** (a) real-device throughput on target mid-range Android and iOS — an EfficientDet-Lite0-vs-Lite2 bake-off; (b) if any *specific* community checkpoint is ever substituted, its individual model-card license must be confirmed (base-architecture license does not automatically pass through).
+**Two things still to validate at build (couldn't be settled from docs alone):** (a) real-device throughput on target **mid-range/low-end Android** — a bake-off across backbone + input-size options; (b) if any *specific* community checkpoint is ever substituted, its individual model-card license must be confirmed (a base-architecture license does not automatically pass through).
 
 **Deferred:** extending coverage to laundry-specific items absent from Fashionpedia (towels, bedsheets, underwear, socks) and Philippine garments (uniforms, barong) via additional labeled data — Phase 2.x/3 (§13). Until then those categories are manual (§5.6).
 
@@ -300,8 +301,8 @@ No new containers, endpoints, or backing resources.
 
 ## 8. Offline behavior
 
-- **First scan entry needs network** — a one-time download of the **MediaPipe WASM runtime + the model** (§5.7 components 2 and 3, ~8–12 MB). Once cached alongside the already-precached app shell (component 1), **Scan Mode runs fully offline** — camera, detection, tracking, and item commits are all local; nothing awaits the network.
-- **The offline guarantee holds only if all three §5.7 components are self-hosted and cached** — in particular the MediaPipe WASM runtime must be served from our own origin, **not** the CDN `FilesetResolver` default, or scan breaks with no network despite a cached model.
+- **First scan entry needs network** — a one-time download of **the model** (§5.7 component 3, ~3–8 MB graph model). On the WebGL backend there is no separate engine to fetch (§5.7); once the model is cached alongside the already-precached app shell + TF.js library (component 1), **Scan Mode runs fully offline** — camera, detection, tracking, and item commits are all local; nothing awaits the network.
+- **The offline guarantee holds only if the §5.7 components are self-hosted and cached** — in particular, if the **WASM (CPU) fallback backend** is shipped, its `.wasm` files must be served from our own origin (`setWasmPaths`), **not** the jsDelivr default, or scan breaks with no network on devices that fall back to CPU.
 - Scan-committed items (`LoadItem` + `Photo` + `PhotoLink`) are RxDB writes replicated by the existing pipeline; the frame **bytes** ride the existing offline upload queue (`local_only` → drain to Blob on reconnect, Phase 1 §8.2).
 - This keeps the PRD's offline-first promise intact for everything except the single first-run model fetch — an acceptable and clearly-scoped exception (PRD §4 "Out of Scope" already anticipated a possible connection requirement for scan; we confine it to first use only).
 
@@ -363,7 +364,7 @@ Unchanged shape (Phase 1 §10.4): lint/typecheck → backend pytest → frontend
 | Item | Disposition |
 |---|---|
 | Extending the garment model to laundry-specific items (towels, bedsheets, underwear, socks) and PH garments (uniforms, barong) absent from Fashionpedia | **Deferred** (Phase 2.x/3) — needs additional labeled data beyond Fashionpedia. Phase 2 ships the Fashionpedia-trained subset (§6.3); out-of-subset categories are manual (§5.6). |
-| On-device scan on **iOS Safari** | **Open risk** (§5.8). Proven on real iOS hardware during build; if unviable, a capability check keeps manual itemization on iOS while Android gets scan. |
+| Real-time scan performance on **low-end Android** | **Open risk** (§5.8, §6.3). Settled by a device bake-off during build (backbone / input size / throttle); if a device can't sustain the loop it degrades (lower resolution / longer throttle) or falls back to manual itemization. |
 | Analytics/telemetry pipeline & dashboards | **Deferred.** Data is captured now (§4.3, §10); rollups are a later server-side concern. |
 | Multi-item simultaneous detection in one frame | **Out of scope** (PRD §4) — single garment through frame at a time; the tracker assumes one dominant new object per pan. |
 | Eager photo prefetch for full offline mirroring | Still **deferred** (inherited from Phase 1 §8.3); scan uses the same lazy cache-on-view. |
@@ -378,7 +379,7 @@ Unchanged shape (Phase 1 §10.4): lint/typecheck → backend pytest → frontend
 | OQ2 category-list stability | **AI-supported subset + manual fallback** (§6.2); no forced taxonomy change — Fashionpedia's ontology already separates the subset. |
 | OQ3 cost model | Moot — on-device inference has **no per-scan cost**. |
 | OQ4 ambiguous/overlapping garments | Single-garment-through-frame framing (PRD §4 out-of-scope); communicated in onboarding (§9); tracker assumes one dominant new object (§5.3). |
-| OQ5 training data | **Resolved:** EfficientDet-Lite trained via **MediaPipe Model Maker on Fashionpedia (CC BY 4.0)** (§6.3) — a first-class Phase 2 deliverable, not deferred. Off-the-shelf weights fail on license/runtime/perf gates (§6.3). |
+| OQ5 training data | **Resolved:** a light SSD-MobileNet/EfficientDet-Lite-class detector trained on **Fashionpedia (CC BY 4.0)** and exported to **TensorFlow.js graph-model** format (§6.3) — a first-class Phase 2 deliverable, not deferred. Off-the-shelf weights fail on license/perf/granularity gates (§6.3). |
 | OQ6 repeated-failure UX | Non-blocking "switch to manual" nudge after a failure run (§5.5). |
 | OQ7 duplicate/tracking | **Within-session object tracking**, not perceptual hashing (§5.3). |
 | OQ8 session boundaries | **Explicit start/stop + inactivity auto-pause** (§5.9). |
