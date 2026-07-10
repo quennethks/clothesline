@@ -1,8 +1,11 @@
 import { useMemo } from 'react'
-import { Link, useNavigate } from 'react-router'
+import { useNavigate } from 'react-router'
 import { useLiveRxQuery, useRxDatabase } from 'rxdb/plugins/react'
 import type { ClotheslineDatabase } from '../db'
 import { closeLoad, setReceivedCount } from '../domain/reconcile'
+import { AppBar } from '../components/AppBar'
+import { Icon } from '../components/Icon'
+import { Stepper } from '../components/Stepper'
 
 // Doubles as both the post-receive per-category check (reached at
 // /loads/:id/checkoff while status is still 'sent' — spec's conceptual
@@ -22,62 +25,91 @@ export function Closed({ loadId }: { loadId: string }) {
     query: categoriesQuery,
   })
 
-  if (!load || !db) return <p>Loading…</p>
+  if (!load || !db) return <p className="screen-body">Loading…</p>
 
   const totalReceived = categories.reduce((sum, category) => sum + (category.count_received ?? 0), 0)
+  const isClosed = load.status === 'closed'
 
   async function handleSave() {
-    if (load!.status !== 'closed') {
-      await closeLoad(db!, loadId)
-    }
+    if (!isClosed) await closeLoad(db!, loadId)
     navigate(`/loads/${loadId}`)
   }
 
   return (
-    <main>
-      <button type="button" onClick={() => navigate('/')}>
-        ← Home
-      </button>
-      <h1>{load.shop_name ?? load.name}</h1>
+    <section>
+      <AppBar
+        title={load.shop_name ?? load.name}
+        onBack={() => navigate('/')}
+        actions={
+          <button type="button" className="iconbtn" aria-label="Save" title="Save" onClick={handleSave}>
+            <Icon name="save" />
+          </button>
+        }
+      />
 
-      <ul>
-        {categories.map((category) => (
-          <li key={category.id}>
-            <span>{category.category}</span>
-            <span>
-              Sent: <Link to={`/loads/${loadId}/gallery`}>{category.count_sent}</Link>
-            </span>
-            <span>
-              Received:
-              <button
-                type="button"
-                aria-label={`Decrease received ${category.category}`}
-                onClick={() =>
-                  setReceivedCount(db!, category.id, (category.count_received ?? 0) - 1)
-                }
-              >
-                −
-              </button>
-              {category.count_received ?? 0}
-              <button
-                type="button"
-                aria-label={`Increase received ${category.category}`}
-                onClick={() =>
-                  setReceivedCount(db!, category.id, (category.count_received ?? 0) + 1)
-                }
-              >
-                +
-              </button>
-            </span>
-          </li>
-        ))}
-      </ul>
+      <div className="screen-body">
+        <div className="center-card">
+          <div className="mb-2">
+            <div className="field-label">Shop</div>
+            <div className="fw-semibold">{load.shop_name ?? '—'}</div>
+          </div>
 
-      <p>Total sent: {load.total_sent}</p>
-      <p>Total received: {totalReceived}</p>
-      <button type="button" onClick={handleSave}>
-        Save
-      </button>
-    </main>
+          <div className="total-hero">
+            <div className="num">{load.total_sent}</div>
+            <div className="lbl">Total sent</div>
+          </div>
+
+          <div className="recv-head">
+            <div>Items</div>
+            <div className="text-center">Sent</div>
+            <div />
+            <div className="text-center">Received</div>
+          </div>
+
+          <div>
+            {categories.map((category) => (
+              <div className="recv-row" key={category.id}>
+                <span className="fw-semibold">{category.category}</span>
+                <button
+                  type="button"
+                  className="sent-badge"
+                  aria-label={`Photos for ${category.category}`}
+                  title="View gallery"
+                  onClick={() => navigate(`/loads/${loadId}/gallery`)}
+                >
+                  {category.count_sent}
+                </button>
+                <span className="text-muted">→</span>
+                <Stepper
+                  value={category.count_received ?? 0}
+                  valueTestId={`received-${category.category}`}
+                  decrementLabel={`Decrease received ${category.category}`}
+                  incrementLabel={`Increase received ${category.category}`}
+                  onDecrement={() =>
+                    setReceivedCount(db!, category.id, (category.count_received ?? 0) - 1)
+                  }
+                  onIncrement={() =>
+                    setReceivedCount(db!, category.id, (category.count_received ?? 0) + 1)
+                  }
+                />
+              </div>
+            ))}
+          </div>
+
+          <div className="total-hero mt-2">
+            <div className="num" data-testid="total-received">
+              {totalReceived}
+            </div>
+            <div className="lbl">Total received</div>
+          </div>
+
+          <div className="d-flex justify-content-end mt-2">
+            <button type="button" className="btn btn-aqua" onClick={handleSave}>
+              {isClosed ? 'Save' : 'Close load'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
   )
 }

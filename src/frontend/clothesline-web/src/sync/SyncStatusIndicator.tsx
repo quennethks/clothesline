@@ -32,7 +32,7 @@ export function SyncStatusIndicator() {
   const label = status === 'active' ? 'Syncing…' : status === 'error' ? 'Sync error' : 'Synced'
 
   return (
-    <span data-testid="sync-status" data-status={status}>
+    <span className="sync-status" data-testid="sync-status" data-status={status}>
       {label}
     </span>
   )

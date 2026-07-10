@@ -29,22 +29,36 @@ function CheckoffRoute() {
 function AuthenticatedApp() {
   return (
     <DbProvider>
-      <SyncStatusIndicator />
-      <Routes>
-        <Route path="/" element={<Home />} />
-        <Route path="/loads/:id" element={<LoadDetail />} />
-        <Route path="/loads/:id/receive" element={<ReceiveRoute />} />
-        <Route path="/loads/:id/checkoff" element={<CheckoffRoute />} />
-        <Route path="/loads/:id/gallery" element={<Gallery />} />
-      </Routes>
+      <div className="stage">
+        <div className="app shadow-sm">
+          <Routes>
+            <Route path="/" element={<Home />} />
+            <Route path="/loads/:id" element={<LoadDetail />} />
+            <Route path="/loads/:id/receive" element={<ReceiveRoute />} />
+            <Route path="/loads/:id/checkoff" element={<CheckoffRoute />} />
+            <Route path="/loads/:id/gallery" element={<Gallery />} />
+          </Routes>
+          <SyncStatusIndicator />
+        </div>
+      </div>
     </DbProvider>
+  )
+}
+
+function AppLoading() {
+  return (
+    <div className="app-loading" role="status">
+      <span className="spinner-border" aria-hidden="true" />
+      <span className="visually-hidden">Loading</span>
+    </div>
   )
 }
 
 function App() {
   const auth = useAuth()
 
-  if (auth.isLoading) return <p>Loading…</p>
+  if (auth.isLoading) return <AppLoading />
+
 
   return (
     <Routes>

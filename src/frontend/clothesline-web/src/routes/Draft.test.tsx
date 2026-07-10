@@ -29,11 +29,11 @@ describe('Draft', () => {
       </MemoryRouter>,
     )
 
-    await screen.findByText('Total: 0')
+    await waitFor(() => expect(screen.getByTestId('draft-total')).toHaveTextContent('0'))
 
     fireEvent.click(await screen.findByLabelText('Increase Shirts'))
 
     await waitFor(() => expect(screen.getByTestId('count-Shirts')).toHaveTextContent('1'))
-    await waitFor(() => expect(screen.getByText('Total: 1')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByTestId('draft-total')).toHaveTextContent('1'))
   })
 })

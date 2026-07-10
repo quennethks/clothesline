@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 import { RxDatabaseProvider } from 'rxdb/plugins/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -14,10 +14,19 @@ vi.mock('../auth/useCurrentUser', () => ({
   }),
 }))
 
+// Home renders SignOutButton, which reaches for the OIDC context this test
+// deliberately doesn't mount.
+const signoutRedirect = vi.fn()
+const removeUser = vi.fn()
+vi.mock('react-oidc-context', () => ({
+  useAuth: () => ({ signoutRedirect, removeUser }),
+}))
+
 describe('Home', () => {
   let db: ClotheslineDatabase
 
   beforeEach(async () => {
+    vi.clearAllMocks()
     db = await createTestDb()
   })
 
@@ -59,5 +68,24 @@ describe('Home', () => {
     await screen.findByTestId('load-card')
     expect(screen.getByLabelText('Duplicate')).toBeInTheDocument()
     expect(screen.getByLabelText('Delete')).toBeInTheDocument()
+  })
+
+  it('signs out after the confirm dialog is accepted', async () => {
+    render(
+      <MemoryRouter>
+        <RxDatabaseProvider database={db}>
+          <Home />
+        </RxDatabaseProvider>
+      </MemoryRouter>,
+    )
+
+    fireEvent.click(screen.getByLabelText('Sign out'))
+    expect(signoutRedirect).not.toHaveBeenCalled()
+
+    // The icon button and the dialog's confirm button share the name
+    // "Sign out", so reach for the one inside the dialog.
+    const dialog = screen.getByRole('dialog')
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Sign out' }))
+    await waitFor(() => expect(signoutRedirect).toHaveBeenCalledOnce())
   })
 })

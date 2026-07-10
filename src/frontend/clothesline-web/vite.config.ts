@@ -30,8 +30,8 @@ export default defineConfig({
         name: 'Clothesline',
         short_name: 'Clothesline',
         description: 'Offline-first laundry drop-off tracker',
-        theme_color: '#863bff',
-        background_color: '#ffffff',
+        theme_color: '#118a90',
+        background_color: '#f3f9f9',
         display: 'standalone',
         start_url: '/',
         icons: [

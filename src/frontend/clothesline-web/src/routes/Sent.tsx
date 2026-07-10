@@ -1,8 +1,10 @@
 import { useMemo } from 'react'
-import { Link, useNavigate } from 'react-router'
+import { useNavigate } from 'react-router'
 import { useLiveRxQuery, useRxDatabase } from 'rxdb/plugins/react'
 import type { ClotheslineDatabase } from '../db'
 import { nowIso } from '../domain/shared'
+import { AppBar } from '../components/AppBar'
+import { Icon } from '../components/Icon'
 
 export function Sent({ loadId }: { loadId: string }) {
   const navigate = useNavigate()
@@ -18,7 +20,7 @@ export function Sent({ loadId }: { loadId: string }) {
     query: categoriesQuery,
   })
 
-  if (!load || !db) return <p>Loading…</p>
+  if (!load || !db) return <p className="screen-body">Loading…</p>
 
   async function handleSendDateChange(sendDate: string) {
     const doc = await db!.loads.findOne(loadId).exec()
@@ -26,36 +28,83 @@ export function Sent({ loadId }: { loadId: string }) {
   }
 
   return (
-    <main>
-      <button type="button" onClick={() => navigate('/')}>
-        ← Home
-      </button>
-      <h1>{load.shop_name ?? load.name}</h1>
-      <label>
-        Send date
-        <input
-          type="date"
-          value={load.send_date ?? ''}
-          onChange={(e) => handleSendDateChange(e.target.value)}
-        />
-      </label>
+    <section>
+      <AppBar
+        title={load.shop_name ?? load.name}
+        onBack={() => navigate('/')}
+        actions={
+          <button
+            type="button"
+            className="iconbtn"
+            aria-label="Start Receive"
+            title="Confirm sent"
+            onClick={() => navigate(`/loads/${loadId}/receive`)}
+          >
+            <Icon name="check-circle" />
+          </button>
+        }
+      />
 
-      <ul>
-        {categories.map((category) => (
-          <li key={category.id}>
-            <span>{category.category}</span>
-            <span>{category.count_sent}</span>
-            <Link to={`/loads/${loadId}/gallery`} aria-label={`Photos for ${category.category}`}>
-              📷
-            </Link>
-          </li>
-        ))}
-      </ul>
+      <div className="screen-body">
+        <div className="center-card">
+          <div className="mb-2">
+            <div className="field-label">Shop</div>
+            <div className="fw-semibold">{load.shop_name ?? '—'}</div>
+          </div>
 
-      <p>Total sent: {load.total_sent}</p>
-      <button type="button" onClick={() => navigate(`/loads/${loadId}/receive`)}>
-        ✓ Start Receive
-      </button>
-    </main>
+          <div className="mb-3">
+            <label className="field-label mb-1 d-block" htmlFor="sent-date">
+              Send date
+            </label>
+            <input
+              id="sent-date"
+              type="date"
+              className="form-control"
+              value={load.send_date ?? ''}
+              onChange={(e) => handleSendDateChange(e.target.value)}
+            />
+          </div>
+
+          <div className="total-hero">
+            <div className="num">{load.total_sent}</div>
+            <div className="lbl">Total items</div>
+          </div>
+
+          <h6 className="fw-bold mb-2">Items</h6>
+          <div>
+            {categories.map((category) => (
+              <div className="item-row" key={category.id}>
+                <span className="iname">{category.category}</span>
+                <button
+                  type="button"
+                  className="thumb border-0"
+                  aria-label={`Photos for ${category.category}`}
+                  onClick={() => navigate(`/loads/${loadId}/gallery`)}
+                >
+                  <Icon name="image" />
+                </button>
+                <span className="qty d-inline-flex align-items-center justify-content-center bg-light">
+                  {category.count_sent}
+                </span>
+              </div>
+            ))}
+          </div>
+
+          <div className="noneditable-note">
+            <Icon name="lock" /> This load has been sent and can no longer be edited.
+          </div>
+
+          <div className="d-flex justify-content-end mt-3">
+            <button
+              type="button"
+              className="btn btn-aqua"
+              onClick={() => navigate(`/loads/${loadId}/receive`)}
+            >
+              <Icon name="check-circle" /> Start Receive
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
   )
 }
