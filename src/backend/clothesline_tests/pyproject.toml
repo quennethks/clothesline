@@ -26,3 +26,14 @@ packages = ["clothesline_tests"]
 
 [tool.pytest.ini_options]
 testpaths = ["clothesline_tests"]
+# Every test here is a bare `async def` with no @pytest.mark.asyncio. Under
+# pytest-asyncio's default STRICT mode those are skipped as "async def
+# functions are not natively supported" and the whole suite errors out, so the
+# collection-wide auto mode is what makes them run at all.
+asyncio_mode = "auto"
+# `migrated_engine` is session-scoped and its asyncpg pool binds to whichever
+# event loop first used it. With pytest-asyncio's default per-function loop,
+# every test after the first gets connections owned by a dead loop. Running
+# the whole session on one loop keeps the pool valid throughout.
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
