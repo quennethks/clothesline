@@ -91,3 +91,9 @@ Two further sub-bugs surfaced while getting this proxy's header rewriting actual
 - **Codespaces port-forwarding can silently lose its registration** after a container restart (observed once mid-session — the forwarded port vanished from the Ports panel and had to be manually re-added via the Command Palette). Not a code bug, but worth knowing if sign-in suddenly regresses after restarting `aspire run` with no code changes — check the Ports panel before assuming a code regression.
 - **`ZITADEL_OIDC_DEFAULTLOGINURLV2`/`LOGOUTURLV2` are set explicitly** to the proxy's single origin rather than left at Zitadel's default relative path, even though the default would now coincidentally work — kept explicit so the single-origin design is self-documenting in `apphost.cs` rather than relying on an implicit path-prefix match.
 - **M6+ and beyond:** if any new backend-to-Zitadel integration is added (e.g. a future admin tool calling the Management API), remember it will hit the *same* Host-matching requirement as Login V2 did (§3.4) unless routed through `identity-proxy` or given its own explicit Host override like `zitadel-oidc-bootstrap` has.
+
+---
+
+## 7. Sequel — see the 10 July 2026 report
+
+Once M4 replication landed, the browser made its first ever call to the **API**, and the Private-port bug of §3.2 recurred on port 8000 — along with three further defects underneath it (a malformed `OIDC_JWKS_URL`, Zitadel's access tokens carrying no `email` claim, and `X-Forwarded-Proto` being passed through rather than forced). All four are written up in [`2026-07-10-codespaces-sync-error.md`](./2026-07-10-codespaces-sync-error.md), which also supersedes the "only the identity port needs Public visibility" note in §5: the API port now needs no visibility change at all, because its traffic goes same-origin through the Vite dev server.

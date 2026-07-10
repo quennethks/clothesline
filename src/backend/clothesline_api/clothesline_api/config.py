@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     allowed_origins: str = os.environ.get("ALLOWED_ORIGINS", "*")
     oidc_issuer: str = os.environ.get("OIDC_ISSUER", "")
     oidc_jwks_url: str = os.environ.get("OIDC_JWKS_URL", "")
+    oidc_userinfo_url: str = os.environ.get("OIDC_USERINFO_URL", "")
 
     @property
     def allowed_origins_list(self) -> list[str]:

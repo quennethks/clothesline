@@ -139,6 +139,11 @@ var identityProxy = builder.AddContainer("identity-proxy", "caddy", "2-alpine")
     .WithEnvironment("ZITADEL_UPSTREAM", $"{zitadel.GetEndpoint("http")}")
     .WithEnvironment("LOGIN_V2_UPSTREAM", $"{loginV2.GetEndpoint("http")}")
     .WithEnvironment("ZITADEL_HOST_HEADER", zitadelExternalHost)
+    // The scheme Zitadel should believe it's externally served over — it
+    // stamps token issuers and resolves instances from X-Forwarded-Proto, so
+    // it must match ExternalSecure above for both browser and server-side
+    // callers. See the Caddyfile for why this is forced, not passed through.
+    .WithEnvironment("ZITADEL_FORWARDED_PROTO", isCodespaces ? "https" : "http")
     .WaitFor(zitadel)
     .WaitFor(loginV2);
 
@@ -151,7 +156,21 @@ var identityProxy = builder.AddContainer("identity-proxy", "caddy", "2-alpine")
 // because it needs identityProxy's endpoint, which doesn't exist yet there.
 loginV2.WithEnvironment("ZITADEL_API_URL", $"{identityProxy.GetEndpoint("http")}");
 
-var internalJwksUrl = $"{identityProxy.GetEndpoint("http")}/oauth/v2/keys";
+// The API is a host executable (uvicorn), so it reaches identity-proxy via
+// its host-published port (localhost:8080), not a container-network hostname.
+// NOTE: interpolating identityProxy.GetEndpoint("http") into a *string var*
+// (as before) captures EndpointReference.ToString() — the literal type name
+// "Aspire.Hosting.ApplicationModel.EndpointReference" — because the eager
+// string overload of WithEnvironment is selected instead of Aspire's lazy
+// endpoint-resolving handler. That silently produced a non-URL JWKS endpoint,
+// so the API could never fetch keys and every authorized request 401'd. The
+// proxy listens on the fixed zitadelPort, so build the URL from that directly.
+var internalJwksUrl = $"http://localhost:{zitadelPort}/oauth/v2/keys";
+
+// Zitadel omits userinfo claims (including `email`) from JWT *access* tokens —
+// only the ID token and this endpoint carry them. The API mirrors `email`
+// (spec §5.5), so it resolves it here on a user's first authenticated request.
+var internalUserinfoUrl = $"http://localhost:{zitadelPort}/oidc/v1/userinfo";
 
 // Zitadel's declarative FirstInstance bootstrap (init-steps.yaml) has no
 // Projects/OIDCApps section — an OIDC application's client_id is only
@@ -228,13 +247,22 @@ var api = builder.AddUvicornApp("clothesline-api", "../../src/backend", "clothes
     // libraries validate `iss` and fetch `jwks_uri` independently.
     .WithEnvironment("OIDC_ISSUER", browserFacingIssuer)
     .WithEnvironment("OIDC_JWKS_URL", internalJwksUrl)
+    .WithEnvironment("OIDC_USERINFO_URL", internalUserinfoUrl)
     .WaitFor(appDb);
 
 var web = builder.AddViteApp("clothesline-web", "../../src/frontend/clothesline-web")
     .WithHttpEndpoint(port: webPort, targetPort: webPort, env: "PORT", isProxied: false)
     .WithReference(api)
     .WaitForCompletion(oidcBootstrap)
-    .WithEnvironment("VITE_API_BASE_URL", PublicUrl(apiPort, "https"))
+    // Empty so the frontend uses same-origin relative paths (/sync, /auth/me,
+    // /health), which Vite's dev-server proxy forwards to the API. This avoids
+    // a cross-origin browser fetch to the API's forwarded Codespaces subdomain,
+    // which GitHub's edge blocks for Private ports (see the web app's
+    // vite.config.ts and the fix doc §3.2). VITE_DEV_API_TARGET is the proxy's
+    // upstream — https://localhost:8000, reachable because Vite runs alongside
+    // the API in the same container regardless of Codespaces.
+    .WithEnvironment("VITE_API_BASE_URL", "")
+    .WithEnvironment("VITE_DEV_API_TARGET", api.GetEndpoint("https"))
     .WithEnvironment("VITE_OIDC_ISSUER", browserFacingIssuer)
     .WithEnvironment("VITE_LOGIN_V2_URL", $"{loginV2.GetEndpoint("http")}")
     .WithEnvironment("VITE_OIDC_CLIENT_ID", () => File.ReadAllText(oidcClientIdFile).Trim());

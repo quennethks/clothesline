@@ -32,7 +32,17 @@
 			# Zitadel prefers X-Forwarded-Host when present, so it has to be
 			# overridden too or instance resolution still mismatches.
 			header_up X-Forwarded-Host {$ZITADEL_HOST_HEADER}
-			header_up X-Forwarded-Proto {http.request.header.X-Forwarded-Proto}
+			# Forced to the *external* scheme rather than passed through.
+			# Zitadel derives both the issuer it stamps on tokens and the
+			# instance it resolves per request from this header. Passing it
+			# through meant browser traffic (arriving via GitHub's
+			# TLS-terminating edge, which sets it to https) got an https
+			# issuer, while server-side callers inside the codespace — e.g.
+			# the API fetching /oidc/v1/userinfo over plain http on
+			# localhost:8080 — sent no such header and were told "access token
+			# invalid", because the token's https issuer no longer matched the
+			# resolved instance. Forcing it makes every caller agree.
+			header_up X-Forwarded-Proto {$ZITADEL_FORWARDED_PROTO}
 		}
 	}
 }

@@ -4,9 +4,10 @@ from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from clothesline_api.auth.jwks import decode_access_token
+from clothesline_api.auth.userinfo import fetch_userinfo_email
 from clothesline_api.common.deps import get_db_session
 from clothesline_api.config import settings
-from clothesline_api.domain.users import upsert_user
+from clothesline_api.domain.users import get_user_by_sub, upsert_user
 
 _UNAUTHORIZED = HTTPException(
     status_code=status.HTTP_401_UNAUTHORIZED,
@@ -34,8 +35,20 @@ async def get_current_user(
         raise _UNAUTHORIZED from exc
 
     sub = claims.get("sub")
-    email = claims.get("email")
-    if not isinstance(sub, str) or not isinstance(email, str):
+    if not isinstance(sub, str):
         raise _UNAUTHORIZED
+
+    email = claims.get("email")
+    if not isinstance(email, str):
+        # Zitadel's JWT access tokens carry no `email` claim (see
+        # auth/userinfo.py). Once the local mirror exists we already know the
+        # email, so only a user's *first* authenticated request pays a
+        # userinfo round-trip — the hot sync path stays free of extra calls.
+        existing = await get_user_by_sub(session, sub=sub)
+        if existing is not None:
+            return existing
+        email = await fetch_userinfo_email(token, settings.oidc_userinfo_url)
+        if not isinstance(email, str):
+            raise _UNAUTHORIZED
 
     return await upsert_user(session, sub=sub, email=email)
