@@ -1,3 +1,4 @@
+#:package Aspire.Hosting.Azure.AppContainers@13.4.6
 #:package Aspire.Hosting.Azure.Storage@13.4.6
 #:package Aspire.Hosting.JavaScript@13.4.6
 #:package Aspire.Hosting.PostgreSQL@13.4.6
@@ -7,6 +8,7 @@
 
 using Aspire.Hosting;
 using Aspire.Hosting.ApplicationModel;
+using Azure.Provisioning.AppContainers;
 
 var builder = DistributedApplication.CreateBuilder(args);
 
@@ -284,5 +286,52 @@ var web = builder.AddViteApp("clothesline-web", "../../src/frontend/clothesline-
     .WithEnvironment("VITE_OIDC_CLIENT_ID", () => File.ReadAllText(oidcClientIdFile).Trim());
 
 api.WithEnvironment("ALLOWED_ORIGINS", PublicUrl(webPort));
+
+// --- publish (azd up → Azure Container Apps) ---
+// Everything above is the local graph and is exercised on every `aspire run`.
+// Everything below runs only under `azd`/`aspire publish`, so it cannot change
+// local behaviour — and, unlike the rest of this file, it has NOT yet been run
+// against a real subscription. See ops/DEPLOY.md.
+if (builder.ExecutionContext.IsPublishMode)
+{
+    // Two ACA environments (spec §2.2): identity is blast-radius-isolated from
+    // the application, and Zitadel's ingress needs settings the app's must not
+    // have (http2, always-on).
+    var identityEnv = builder.AddAzureContainerAppEnvironment("identity-env");
+    var appEnv = builder.AddAzureContainerAppEnvironment("app-env");
+
+    api.WithComputeEnvironment(appEnv);
+    web.WithComputeEnvironment(appEnv);
+    zitadel.WithComputeEnvironment(identityEnv);
+    loginV2.WithComputeEnvironment(identityEnv);
+    identityProxy.WithComputeEnvironment(identityEnv);
+
+    // Zitadel serves its management/admin gRPC over HTTP/2, and ACA's default
+    // `auto` transport doesn't carry h2c end-to-end (spec §5.6b). It also must
+    // not scale to zero — an IdP's cold start lands squarely on the login path,
+    // and it runs background projections.
+    zitadel.PublishAsAzureContainerApp((_, app) =>
+    {
+        app.Configuration.Ingress.Transport = ContainerAppIngressTransportMethod.Http2;
+        app.Configuration.Ingress.External = false; // only identity-proxy is public
+        app.Template.Scale.MinReplicas = 1;
+    });
+    loginV2.PublishAsAzureContainerApp((_, app) =>
+    {
+        app.Configuration.Ingress.External = false; // reached only via identity-proxy
+        app.Template.Scale.MinReplicas = 1;
+    });
+
+    // The single-origin requirement (spec §5.6a) is met by publishing the same
+    // Caddy proxy we already run locally as the identity environment's public
+    // ingress, rather than by standing up App Gateway/Front Door: ACA can't
+    // path-route *across* apps, but a proxy container inside it can, and this
+    // one is already proven by the local graph and the e2e suite.
+    identityProxy.PublishAsAzureContainerApp((_, app) =>
+    {
+        app.Configuration.Ingress.External = true;
+        app.Template.Scale.MinReplicas = 1;
+    });
+}
 
 builder.Build().Run();

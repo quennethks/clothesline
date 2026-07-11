@@ -1,0 +1,62 @@
+name: Deploy
+
+# Provisions + deploys both ACA environments from the Aspire model (spec §11).
+#
+# NOT YET RUN against a real subscription — see ops/DEPLOY.md for what is
+# expected to break first. Manual-dispatch only until it has landed once.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: azd environment name
+        required: true
+        default: clothesline-prod
+
+permissions:
+  id-token: write # federated credential for azd (no stored secrets)
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    env:
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      AZURE_ENV_NAME: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - uses: astral-sh/setup-uv@v4
+        with:
+          python-version: "3.12"
+      - uses: Azure/setup-azd@v2
+
+      - name: azd login (federated)
+        run: azd auth login --client-id "$AZURE_CLIENT_ID" --federated-credential-provider github --tenant-id "$AZURE_TENANT_ID"
+
+      - name: provision infrastructure
+        run: azd provision --no-prompt
+
+      # Ordered *before* the app deploy on purpose (spec §11.2): the API must
+      # never go live against a schema that hasn't caught up with it. Runs from
+      # the shared clothesline_db package, not as a standing ACA job.
+      - name: run database migrations
+        working-directory: src/backend/clothesline_db
+        env:
+          CLOTHESLINE_DB_URL: ${{ secrets.CLOTHESLINE_DB_URL }}
+        run: |
+          uv sync --all-packages
+          uv run alembic -c alembic.ini upgrade head
+
+      - name: deploy the applications
+        run: azd deploy --no-prompt
+
+      - name: smoke the deployment
+        run: |
+          api_url=$(azd env get-value SERVICE_CLOTHESLINE_API_ENDPOINT_URL)
+          curl -fsS "$api_url/health" | tee /dev/stderr | grep -q '"db":"ok"'
