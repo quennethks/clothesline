@@ -25,7 +25,7 @@ Identity is **not** built in-house: it is delegated to a self-hosted **Zitadel**
 | Persistence code | Shared **`clothesline_db`** package (ORM models + migrations), imported by the API |
 | Photo storage | Azure Blob Storage (Azurite locally) |
 | Frontend | React + Vite, TypeScript, PWA (service worker + IndexedDB) |
-| Identity / auth | Self-hosted **Zitadel** (OIDC), passwordless email OTP via **Login V2**; API validates JWTs against Zitadel's JWKS |
+| Identity / auth | Self-hosted **Zitadel** (OIDC), sign-in via **Login V2** (email + password — see §5.5, the passwordless plan didn't survive contact with Zitadel); API validates JWTs against Zitadel's JWKS |
 | Backend tests | pytest |
 | Frontend unit tests | Vitest |
 | E2E tests | Playwright |
@@ -398,12 +398,16 @@ Because these are local writes, the whole send→receive→reconcile flow runs o
 
 Identity is delegated entirely to a **self-hosted Zitadel** OIDC server. Our code never stores credentials or issues tokens; it only validates them and keeps the minimal user mirror (§4.1).
 
-- **Passwordless, no signup (PRD §4.1).** The user enters only their email. Zitadel (via **Login V2**) creates the account **just-in-time** if it doesn't exist and sends a **one-time email code / magic link** as the *primary* factor; on verification Zitadel issues OIDC tokens. No password is ever set, and there is no separate signup step — exactly the counter-friendly, zero-setup flow the PRD requires.
-- **Login flow.** The SPA uses **OIDC Authorization Code + PKCE**, redirecting to Zitadel **Login V2** for the email-code exchange, then returning with id/access/refresh tokens. Building on Login V2 (rather than a hand-rolled screen) keeps the security-critical login UI in Zitadel's vetted, maintained component.
+- **Sign-in — email + password (interim).** The user registers through **Login V2** (email, name, password) and signs in with email + password thereafter.
+
+  > ⚠️ **This is a deliberate departure from the PRD's passwordless premise, forced by Zitadel.** The original design here called for **email-only sign-in with a one-time code as the *primary* factor**. Login V2 does not offer that: its registration screen exposes exactly two primary factors, **Passkey** or **Password**. Zitadel supports email OTP only as a *second* factor, so "enter your email, get a code, you're in" is not buildable on Zitadel as it stands. Discovered in M8 when the e2e suite first drove the real login UI.
+  >
+  > **Password is the agreed interim.** The passwordless option that *is* available is **Passkey** (WebAuthn) — biometric on a phone, no shared secret — which would preserve the PRD's no-password property and is the natural candidate if we revisit this. Tracked as an open decision; PRD §4.1's "no password" claim does not currently hold.
+- **Login flow.** The SPA uses **OIDC Authorization Code + PKCE**, redirecting to Zitadel **Login V2** to authenticate, then returning with id/access/refresh tokens. Building on Login V2 (rather than a hand-rolled screen) keeps the security-critical login UI in Zitadel's vetted, maintained component.
 - **API validation.** The API validates the bearer **access token against Zitadel's JWKS** (issuer + audience checks) on every request. No introspection round-trip on the hot path.
 - **Local user mirror.** On the first authenticated request, the API upserts `User {id, sub, email}` from the token claims; `email` is refreshed on subsequent logins so it can't drift. This is the only PII we persist.
 - **Offline.** Tokens are persisted client-side (IndexedDB) so an installed PWA stays authenticated through offline sessions (PRD §4.1: zero re-auth friction); access tokens are short-lived and refreshed on reconnect. Tradeoff noted in §9.
-- **Local dev.** Zitadel core + Login V2 run as containers under Aspire, behind a local single-origin reverse proxy (`identity-proxy`, §2.1); OTP emails are captured by **Mailpit** (§10.3), so passwordless sign-in is fully exercisable offline of any real mail provider.
+- **Local dev.** Zitadel core + Login V2 run as containers under Aspire, behind a local single-origin reverse proxy (`identity-proxy`, §2.1); any mail Zitadel sends (verification, recovery) is captured by **Mailpit** (§10.3), so sign-in is fully exercisable offline of any real mail provider.
 
 ### 5.6 Zitadel self-hosting requirements on Azure Container Apps
 
@@ -565,7 +569,7 @@ Aspire runs **Azurite** (Blob emulator), so the whole capture → upload → cac
 
 ### 10.3 E2E (`clothesline-e2e`, Playwright)
 - Full flows against the running Aspire graph, which includes the **real Zitadel core + Login V2** containers:
-  - Passwordless sign-in (email → OTP read from the **Mailpit** sink → authenticated).
+  - Sign-in through the real Login V2 (register → email + password → authenticated); requests are scoped to that user.
   - Create → itemize → send → receive **match** (fast close).
   - Create → send → receive **mismatch** → category check-off → close.
   - Duplicate a load → verify only categories carry over, counts/photos/shop reset.
@@ -609,7 +613,7 @@ If two environments prove more cost than the MVP justifies, Zitadel core + Login
 ## 12. Local development
 
 - Open the repo in the **Dev Container** (`.devcontainer/`) — provides Python 3.12 + `uv`, Node.js, the .NET SDK + Aspire workload, and Docker access.
-- One command (`aspire run`) starts the full graph — including Zitadel core + Login V2 behind the local `identity-proxy` (§2.1), and Mailpit — so passwordless sign-in works end-to-end with no cloud dependencies; the PWA hot-reloads via Vite, the API via Uvicorn `--reload`.
+- One command (`aspire run`) starts the full graph — including Zitadel core + Login V2 behind the local `identity-proxy` (§2.1), and Mailpit — so sign-in works end-to-end with no cloud dependencies; the PWA hot-reloads via Vite, the API via Uvicorn `--reload`.
 - **Running in a GitHub Codespace:** `apphost.cs` auto-detects it and rewrites the OIDC issuer/redirect URIs to the Codespaces forwarded-URL pattern (§2.1) — no manual config needed. The one manual step: set `identity-proxy`'s forwarded port to **Public** visibility in the Ports panel (it serves unauthenticated first-time sign-in requests, so a background browser fetch to a Private port gets blocked at GitHub's edge). See [`fixes/2026-07-05-codespaces-oidc-signin.md`](./fixes/2026-07-05-codespaces-oidc-signin.md) if sign-in ever breaks again.
 - See `CLAUDE.md` at the repo root for the authoritative dev/orchestration notes.
 
@@ -619,7 +623,7 @@ If two environments prove more cost than the MVP justifies, Zitadel core + Login
 
 | PRD § | Feature | Where implemented |
 |---|---|---|
-| 4.1 | Passwordless email auth | **Zitadel** (Login V2, email-OTP, JIT user); API validates JWTs via JWKS; Mailpit locally (§5.5–5.6) |
+| 4.1 | Email auth | **Zitadel** (Login V2, email + password — **not** the OTP the PRD asked for, see §5.5); API validates JWTs via JWKS; Mailpit locally (§5.5–5.6) |
 | 4.2 | Create a load | local `loads` doc (`name` defaults to date, optional shop fields) + pre-seeded categories; syncs via `/sync/loads` (§4.1, §5.3, §6.2) |
 | 4.3 | Itemize + custom categories | pre-seeded template + custom free-text `load_item_categories`; auto/manual `count_mode` (§4.3, §4.4); tap-counter screen (§6.3) |
 | 4.4 | Duplicate load | local-only new date-named draft carrying the category set (§5.3) |
