@@ -32,7 +32,13 @@ var pg = builder.AddPostgres("pg", pgUser, pgPassword);
 var appDb = pg.AddDatabase("clothesline-db", databaseName: "clothesline_db");
 var zitadelDb = pg.AddDatabase("zitadel-db", databaseName: "zitadel");
 
-var storage = builder.AddAzureStorage("storage").RunAsEmulator();
+// Fixed blob port for the same reason web/zitadel get fixed ports: the
+// browser PUTs/GETs photo bytes *directly* to Blob via SAS URLs (spec §8.2),
+// so Azurite's origin has to be stable and reachable from the browser — a
+// dynamic Aspire proxy port isn't (see BLOB_PUBLIC_ORIGIN on the API below).
+const int blobPort = 10000;
+var storage = builder.AddAzureStorage("storage")
+    .RunAsEmulator(emulator => emulator.WithBlobPort(blobPort));
 var blobs = storage.AddBlobs("blobs");
 
 // --- identity infra ---
@@ -242,6 +248,11 @@ var api = builder.AddUvicornApp("clothesline-api", "../../src/backend", "clothes
     .WithReference(appDb)
     .WithEnvironment("ConnectionStrings__clothesline_db", appDb.Resource.ConnectionStringExpression)
     .WithReference(blobs)
+    // The API talks to Azurite over 127.0.0.1:10000 (its connection string),
+    // but the SAS URLs it mints are used by the *browser* — which under
+    // Codespaces reaches that port on a forwarded HTTPS subdomain instead.
+    // media/blob.py rewrites the SAS URL's origin to this.
+    .WithEnvironment("BLOB_PUBLIC_ORIGIN", PublicUrl(blobPort))
     // Browser-facing issuer (host-reachable) vs. internal JWKS fetch URL
     // (container-network hostname) are deliberately different — JWT
     // libraries validate `iss` and fetch `jwks_uri` independently.

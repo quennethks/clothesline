@@ -50,9 +50,12 @@ async def test_content_conflict_still_detected_despite_ignored_timestamps(
     created = load_doc(load_id, test_user.id)
     await push_create(authed_client, "loads", created)
 
-    assert await push_update(
-        authed_client, "loads", {**created, "name": "From A", "updated_at": SECOND_TS}, created
-    ) == []
+    assert (
+        await push_update(
+            authed_client, "loads", {**created, "name": "From A", "updated_at": SECOND_TS}, created
+        )
+        == []
+    )
 
     resp_b = await push_update(
         authed_client,

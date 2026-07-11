@@ -20,9 +20,7 @@ async def test_load_with_categories_and_items_roundtrips(db_session: AsyncSessio
     db_session.add(item)
     await db_session.commit()
 
-    reloaded = (
-        await db_session.execute(select(Load).where(Load.id == load.id))
-    ).scalar_one()
+    reloaded = (await db_session.execute(select(Load).where(Load.id == load.id))).scalar_one()
     assert reloaded.name == "2026-07-04"
     assert reloaded.shop_name == "Wash & Fold"
     assert reloaded.updated_at is not None
@@ -62,8 +60,6 @@ async def test_arbitrary_category_string_is_accepted(db_session: AsyncSession) -
     await db_session.commit()
 
     reloaded = (
-        await db_session.execute(
-            select(LoadItemCategory).where(LoadItemCategory.id == category.id)
-        )
+        await db_session.execute(select(LoadItemCategory).where(LoadItemCategory.id == category.id))
     ).scalar_one()
     assert reloaded.category == "Grandma's Doilies"

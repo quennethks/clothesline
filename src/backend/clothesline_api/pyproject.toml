@@ -12,6 +12,8 @@ dependencies = [
   "pyjwt[crypto]>=2.9",
   "clothesline-db",
   "httpx>=0.28.1",
+  "azure-storage-blob>=12.24",
+  "azure-identity>=1.19",
 ]
 
 [tool.uv.sources]

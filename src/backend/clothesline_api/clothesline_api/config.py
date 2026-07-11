@@ -21,6 +21,17 @@ class Settings(BaseSettings):
     oidc_jwks_url: str = os.environ.get("OIDC_JWKS_URL", "")
     oidc_userinfo_url: str = os.environ.get("OIDC_USERINFO_URL", "")
 
+    # Azurite locally (a full connection string), a bare service URI + managed
+    # identity in Azure — media/blob.py branches on which one it got.
+    blob_connection_string: str = os.environ.get("ConnectionStrings__blobs", "")
+    blob_container: str = os.environ.get("BLOB_CONTAINER", "photos")
+    # See media/blob.py — the SDK's default is ahead of what Azurite accepts.
+    blob_api_version: str = os.environ.get("BLOB_API_VERSION", "2025-01-05")
+    # The origin the *browser* reaches Blob on, when that differs from the
+    # one the API reaches it on (Codespaces port forwarding). Empty in Azure,
+    # where both are the same public account endpoint.
+    blob_public_origin: str = os.environ.get("BLOB_PUBLIC_ORIGIN", "")
+
     @property
     def allowed_origins_list(self) -> list[str]:
         return [origin.strip() for origin in self.allowed_origins.split(",") if origin.strip()]

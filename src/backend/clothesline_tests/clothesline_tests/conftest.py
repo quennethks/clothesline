@@ -102,9 +102,7 @@ def fake_jwks_keypair() -> FakeJwks:
 
 
 @pytest.fixture
-def fake_jwks(
-    monkeypatch: pytest.MonkeyPatch, fake_jwks_keypair: FakeJwks
-) -> Iterator[FakeJwks]:
+def fake_jwks(monkeypatch: pytest.MonkeyPatch, fake_jwks_keypair: FakeJwks) -> Iterator[FakeJwks]:
     class _StubJwksClient:
         def get_signing_key_from_jwt(self, token: str) -> SimpleNamespace:
             return SimpleNamespace(key=fake_jwks_keypair.public_key)

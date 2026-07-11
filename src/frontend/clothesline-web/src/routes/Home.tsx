@@ -11,6 +11,7 @@ import { ConfirmModal } from '../components/ConfirmModal'
 import { Icon } from '../components/Icon'
 import { StatusPill } from '../components/StatusPill'
 import { displayStatus, type DisplayStatus } from '../components/loadStatus'
+import { PhotoImage } from '../photos/PhotoTile'
 
 // useLiveRxQuery's `query` must be a stable reference — a fresh object
 // literal every render makes its live subscription re-run continuously
@@ -26,6 +27,33 @@ const FILTERS: { key: FilterKey; label: string }[] = [
   { key: 'receiving', label: 'Receiving' },
   { key: 'closed', label: 'Closed' },
 ]
+
+// The load's thumbnail is the is_primary photo linked to the load itself
+// (spec §4.1) — the bundle photo. Falls back to the bag glyph until there is
+// one. Two chained live queries (link → photo) so it updates the moment a
+// bundle photo is captured or deleted.
+function LoadThumbnail({ loadId }: { loadId: string }) {
+  const linkQuery = useMemo(
+    () => ({ selector: { entity_type: 'load', entity_id: loadId, is_primary: true } }),
+    [loadId],
+  )
+  const { results: links } = useLiveRxQuery({ collection: 'photo_links', query: linkQuery })
+  const photoId = links[0]?.photo_id
+
+  const photoQuery = useMemo(() => ({ selector: { id: photoId ?? '' } }), [photoId])
+  const { results: photos } = useLiveRxQuery({ collection: 'photos', query: photoQuery })
+  const photo = photos[0]
+
+  if (!photo) return <Icon name="bag" />
+  return (
+    <PhotoImage
+      photoId={photo.id}
+      blobKey={photo.blob_key}
+      alt="Load photo"
+      className="bag-photo"
+    />
+  )
+}
 
 function LoadItemCount({ loadId }: { loadId: string }) {
   const query = useMemo(() => ({ selector: { load_id: loadId } }), [loadId])
@@ -87,7 +115,7 @@ function LoadCard({
       }}
     >
       <span className="bag">
-        <Icon name="bag" />
+        <LoadThumbnail loadId={load.id} />
         <LoadItemCount loadId={load.id} />
       </span>
 

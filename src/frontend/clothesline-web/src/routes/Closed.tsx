@@ -75,7 +75,7 @@ export function Closed({ loadId }: { loadId: string }) {
                   className="sent-badge"
                   aria-label={`Photos for ${category.category}`}
                   title="View gallery"
-                  onClick={() => navigate(`/loads/${loadId}/gallery`)}
+                  onClick={() => navigate(`/loads/${loadId}/gallery?category=${category.id}`)}
                 >
                   {category.count_sent}
                 </button>

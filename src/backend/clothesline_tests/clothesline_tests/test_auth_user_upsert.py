@@ -37,7 +37,5 @@ async def test_changed_email_updates_in_place_not_duplicated(
     ).scalar_one()
     assert count == 1
 
-    user = (
-        await db_session.execute(select(User).where(User.sub == "zitadel|drift"))
-    ).scalar_one()
+    user = (await db_session.execute(select(User).where(User.sub == "zitadel|drift"))).scalar_one()
     assert user.email == "new@example.com"

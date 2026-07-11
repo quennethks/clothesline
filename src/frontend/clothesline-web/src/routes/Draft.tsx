@@ -56,15 +56,28 @@ export function Draft({ loadId }: { loadId: string }) {
         title={load.name}
         onBack={() => navigate('/')}
         actions={
-          <button
-            type="button"
-            className="iconbtn"
-            aria-label="Send load"
-            title="Send load"
-            onClick={handleSend}
-          >
-            <Icon name="send" />
-          </button>
+          <div className="appbar-actions">
+            {/* Load-level gallery — where the bundle photo (the home card's
+                thumbnail) is added; the per-row icons below scope to a category. */}
+            <button
+              type="button"
+              className="iconbtn ghost"
+              aria-label="Load photos"
+              title="Load photos"
+              onClick={() => navigate(`/loads/${loadId}/gallery`)}
+            >
+              <Icon name="images" />
+            </button>
+            <button
+              type="button"
+              className="iconbtn"
+              aria-label="Send load"
+              title="Send load"
+              onClick={handleSend}
+            >
+              <Icon name="send" />
+            </button>
+          </div>
         }
       />
 
@@ -124,7 +137,7 @@ export function Draft({ loadId }: { loadId: string }) {
                     className="mini"
                     aria-label={`Photos for ${category.category}`}
                     title="View photos"
-                    onClick={() => navigate(`/loads/${loadId}/gallery`)}
+                    onClick={() => navigate(`/loads/${loadId}/gallery?category=${category.id}`)}
                   >
                     <Icon name="images" />
                   </button>

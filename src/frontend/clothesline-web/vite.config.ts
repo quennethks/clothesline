@@ -53,6 +53,7 @@ export default defineConfig({
     // /auth/callback SPA route keeps being served by Vite.
     proxy: {
       '/sync': apiProxy,
+      '/media': apiProxy,
       '/auth/me': apiProxy,
       '/health': apiProxy,
     },

@@ -79,7 +79,7 @@ export function Sent({ loadId }: { loadId: string }) {
                   type="button"
                   className="thumb border-0"
                   aria-label={`Photos for ${category.category}`}
-                  onClick={() => navigate(`/loads/${loadId}/gallery`)}
+                  onClick={() => navigate(`/loads/${loadId}/gallery?category=${category.id}`)}
                 >
                   <Icon name="image" />
                 </button>
