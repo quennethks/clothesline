@@ -74,7 +74,8 @@ export function Gallery() {
     try {
       if (categoryId) await capturePhotoForCategory(db, categoryId, file)
       else await capturePhotoForLoad(db, loadId, file)
-    } catch {
+    } catch (cause) {
+      console.error('photo capture failed', cause)
       setError("That image couldn't be added. Try another photo.")
     } finally {
       setBusy(false)

@@ -10,6 +10,7 @@ import { AppBar } from '../components/AppBar'
 import { ConfirmModal } from '../components/ConfirmModal'
 import { Icon } from '../components/Icon'
 import { StatusPill } from '../components/StatusPill'
+import { useToast } from '../components/Toast'
 import { displayStatus, type DisplayStatus } from '../components/loadStatus'
 import { PhotoImage } from '../photos/PhotoTile'
 
@@ -79,6 +80,7 @@ function LoadCard({
   onOpen: (id: string) => void
   onAskDelete: (load: LoadDocType) => void
 }) {
+  const toast = useToast()
   const [menuOpen, setMenuOpen] = useState(false)
   const ovfRef = useRef<HTMLDivElement>(null)
 
@@ -95,6 +97,7 @@ function LoadCard({
     event.stopPropagation()
     setMenuOpen(false)
     await duplicateLoad(db, load.id)
+    toast('Duplicated — categories carried over')
   }
 
   function handleDelete(event: React.MouseEvent) {
@@ -171,6 +174,7 @@ function LoadCard({
 export function Home() {
   const navigate = useNavigate()
   const db = useRxDatabase<ClotheslineDatabase>()
+  const toast = useToast()
   const { user } = useCurrentUser()
   const { results: loads } = useLiveRxQuery({ collection: 'loads', query: ALL_LOADS_QUERY })
   const [filter, setFilter] = useState<FilterKey>('all')
@@ -183,7 +187,10 @@ export function Home() {
   }
 
   async function handleConfirmDelete() {
-    if (db && pendingDelete) await deleteLoad(db, pendingDelete.id)
+    if (db && pendingDelete) {
+      await deleteLoad(db, pendingDelete.id)
+      toast(`Deleted "${pendingDelete.name}"`)
+    }
     setPendingDelete(null)
   }
 
@@ -230,7 +237,11 @@ export function Home() {
         </div>
 
         {shown.length === 0 ? (
-          <div className="empty-note">No loads with this status yet.</div>
+          <div className="empty-note">
+            {loads.length === 0
+              ? 'No loads yet. Tap + to start counting a load.'
+              : 'No loads with this status.'}
+          </div>
         ) : (
           <ul className="desktop-grid list-unstyled m-0 p-0">
             {db &&

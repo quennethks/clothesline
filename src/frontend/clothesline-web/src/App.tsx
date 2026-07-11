@@ -2,6 +2,8 @@ import { Route, Routes, useParams } from 'react-router'
 import { useAuth } from 'react-oidc-context'
 import { Callback } from './auth/Callback'
 import { SignIn } from './auth/SignIn'
+import { InstallPrompt } from './components/InstallPrompt'
+import { ToastProvider } from './components/Toast'
 import { DbProvider } from './db/DbProvider'
 import { Closed } from './routes/Closed'
 import { Gallery } from './routes/Gallery'
@@ -29,18 +31,21 @@ function CheckoffRoute() {
 function AuthenticatedApp() {
   return (
     <DbProvider>
-      <div className="stage">
-        <div className="app shadow-sm">
-          <Routes>
-            <Route path="/" element={<Home />} />
-            <Route path="/loads/:id" element={<LoadDetail />} />
-            <Route path="/loads/:id/receive" element={<ReceiveRoute />} />
-            <Route path="/loads/:id/checkoff" element={<CheckoffRoute />} />
-            <Route path="/loads/:id/gallery" element={<Gallery />} />
-          </Routes>
-          <SyncStatusIndicator />
+      <ToastProvider>
+        <div className="stage">
+          <div className="app shadow-sm">
+            <Routes>
+              <Route path="/" element={<Home />} />
+              <Route path="/loads/:id" element={<LoadDetail />} />
+              <Route path="/loads/:id/receive" element={<ReceiveRoute />} />
+              <Route path="/loads/:id/checkoff" element={<CheckoffRoute />} />
+              <Route path="/loads/:id/gallery" element={<Gallery />} />
+            </Routes>
+            <SyncStatusIndicator />
+            <InstallPrompt />
+          </div>
         </div>
-      </div>
+      </ToastProvider>
     </DbProvider>
   )
 }

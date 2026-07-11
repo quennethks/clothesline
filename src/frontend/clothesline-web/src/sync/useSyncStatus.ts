@@ -18,10 +18,10 @@ export function useSyncStatus(
     }
 
     const activeFlags = new Array(replicationStates.length).fill(false)
-    let hasError = false
+    const errorFlags = new Array(replicationStates.length).fill(false)
 
     const recompute = () => {
-      setStatus(hasError ? 'error' : activeFlags.some(Boolean) ? 'active' : 'idle')
+      setStatus(errorFlags.some(Boolean) ? 'error' : activeFlags.some(Boolean) ? 'active' : 'idle')
     }
 
     const subs = replicationStates.flatMap((state, index) => [
@@ -30,12 +30,34 @@ export function useSyncStatus(
         recompute()
       }),
       state.error$.subscribe(() => {
-        hasError = true
+        errorFlags[index] = true
+        recompute()
+      }),
+      // An error must be *clearable*. Going offline guarantees one, so a
+      // latching error flag would leave the app permanently claiming to be
+      // broken after its most ordinary event. A completed pull or push is the
+      // proof this collection is talking to the server again.
+      state.received$.subscribe(() => {
+        errorFlags[index] = false
+        recompute()
+      }),
+      state.sent$.subscribe(() => {
+        errorFlags[index] = false
         recompute()
       }),
     ])
 
+    // A cycle with nothing to send and nothing to receive emits on neither of
+    // those, so reconnecting clears the errors and re-drives replication too.
+    const onOnline = () => {
+      errorFlags.fill(false)
+      recompute()
+      for (const state of replicationStates) void state.reSync()
+    }
+    window.addEventListener('online', onOnline)
+
     return () => {
+      window.removeEventListener('online', onOnline)
       subs.forEach((sub) => sub.unsubscribe())
     }
   }, [replicationStates])

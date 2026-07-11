@@ -6,6 +6,7 @@ import { closeLoad, setReceivedCount } from '../domain/reconcile'
 import { AppBar } from '../components/AppBar'
 import { Icon } from '../components/Icon'
 import { Stepper } from '../components/Stepper'
+import { useToast } from '../components/Toast'
 
 // Doubles as both the post-receive per-category check (reached at
 // /loads/:id/checkoff while status is still 'sent' — spec's conceptual
@@ -14,6 +15,7 @@ import { Stepper } from '../components/Stepper'
 export function Closed({ loadId }: { loadId: string }) {
   const navigate = useNavigate()
   const db = useRxDatabase<ClotheslineDatabase>()
+  const toast = useToast()
   // useLiveRxQuery's `query` must be a stable reference (see Home.tsx).
   const loadQuery = useMemo(() => ({ selector: { id: loadId } }), [loadId])
   const categoriesQuery = useMemo(() => ({ selector: { load_id: loadId } }), [loadId])
@@ -31,7 +33,12 @@ export function Closed({ loadId }: { loadId: string }) {
   const isClosed = load.status === 'closed'
 
   async function handleSave() {
-    if (!isClosed) await closeLoad(db!, loadId)
+    if (!isClosed) {
+      await closeLoad(db!, loadId)
+      toast('Load closed')
+    } else {
+      toast('Saved')
+    }
     navigate(`/loads/${loadId}`)
   }
 
@@ -54,9 +61,20 @@ export function Closed({ loadId }: { loadId: string }) {
             <div className="fw-semibold">{load.shop_name ?? '—'}</div>
           </div>
 
-          <div className="total-hero">
-            <div className="num">{load.total_sent}</div>
-            <div className="lbl">Total sent</div>
+          {/* Desktop reflows these two into side-by-side columns (spec §6.5);
+              on a phone they stay stacked, sent above the manifest and
+              received below it, as the wireframe has them. */}
+          <div className="closed-totals">
+            <div className="total-hero">
+              <div className="num">{load.total_sent}</div>
+              <div className="lbl">Total sent</div>
+            </div>
+            <div className="total-hero desktop-only">
+              <div className="num" data-testid="total-received-desktop">
+                {totalReceived}
+              </div>
+              <div className="lbl">Total received</div>
+            </div>
           </div>
 
           <div className="recv-head">
@@ -96,7 +114,7 @@ export function Closed({ loadId }: { loadId: string }) {
             ))}
           </div>
 
-          <div className="total-hero mt-2">
+          <div className="total-hero mt-2 mobile-only">
             <div className="num" data-testid="total-received">
               {totalReceived}
             </div>

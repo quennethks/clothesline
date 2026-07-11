@@ -21,7 +21,9 @@ export function AppBar({
           <Icon name="arrow-left" />
         </button>
       )}
-      <div className={titleClassName ? `title ${titleClassName}` : 'title'}>{title}</div>
+      {/* An h1, not a div: it is the screen's heading, and screen readers (and
+          the e2e suite) navigate by it. */}
+      <h1 className={titleClassName ? `title ${titleClassName}` : 'title'}>{title}</h1>
       {actions}
     </div>
   )

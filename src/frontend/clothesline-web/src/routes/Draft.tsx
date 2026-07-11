@@ -9,10 +9,12 @@ import { nowIso } from '../domain/shared'
 import { AppBar } from '../components/AppBar'
 import { Icon } from '../components/Icon'
 import { Stepper } from '../components/Stepper'
+import { useToast } from '../components/Toast'
 
 export function Draft({ loadId }: { loadId: string }) {
   const navigate = useNavigate()
   const db = useRxDatabase<ClotheslineDatabase>()
+  const toast = useToast()
   const [newCategoryName, setNewCategoryName] = useState('')
 
   // useLiveRxQuery's `query` must be a stable reference (see Home.tsx).
@@ -45,8 +47,14 @@ export function Draft({ loadId }: { loadId: string }) {
     setNewCategoryName('')
   }
 
+  async function handleRemoveCategory(categoryId: string, name: string) {
+    await removeCategory(db!, categoryId)
+    toast(`Removed ${name}`)
+  }
+
   async function handleSend() {
     await sendLoad(db!, loadId)
+    toast(`Sent — ${total} ${total === 1 ? 'item' : 'items'} on the manifest`)
     navigate(`/loads/${loadId}`)
   }
 
@@ -108,7 +116,10 @@ export function Draft({ loadId }: { loadId: string }) {
             />
           </div>
 
-          <div className="total-hero">
+          {/* Sticky so the running total stays on screen through the whole
+              itemize scroll — spec §6.3 makes it a hard requirement, and it's
+              also what the user is watching while they tap. */}
+          <div className="total-hero sticky">
             <div className="num" data-testid="draft-total">
               {total}
             </div>
@@ -120,39 +131,45 @@ export function Draft({ loadId }: { loadId: string }) {
           </div>
 
           <div>
-            {categories.map((category) => (
-              <div className="item-row" key={category.id}>
-                <span className="iname">{category.category}</span>
-                <Stepper
-                  value={category.count_sent}
-                  valueTestId={`count-${category.category}`}
-                  decrementLabel={`Decrease ${category.category}`}
-                  incrementLabel={`Increase ${category.category}`}
-                  onDecrement={() => decrementCount(db!, category.id)}
-                  onIncrement={() => incrementCount(db!, category.id)}
-                />
-                <div className="item-tools">
-                  <button
-                    type="button"
-                    className="mini"
-                    aria-label={`Photos for ${category.category}`}
-                    title="View photos"
-                    onClick={() => navigate(`/loads/${loadId}/gallery?category=${category.id}`)}
-                  >
-                    <Icon name="images" />
-                  </button>
-                  <button
-                    type="button"
-                    className="mini danger"
-                    aria-label={`Remove ${category.category}`}
-                    title="Remove"
-                    onClick={() => removeCategory(db!, category.id)}
-                  >
-                    <Icon name="trash3" />
-                  </button>
-                </div>
+            {categories.length === 0 ? (
+              <div className="empty-note">
+                No categories left. Add one below to start counting.
               </div>
-            ))}
+            ) : (
+              categories.map((category) => (
+                <div className="item-row" key={category.id}>
+                  <span className="iname">{category.category}</span>
+                  <Stepper
+                    value={category.count_sent}
+                    valueTestId={`count-${category.category}`}
+                    decrementLabel={`Decrease ${category.category}`}
+                    incrementLabel={`Increase ${category.category}`}
+                    onDecrement={() => decrementCount(db!, category.id)}
+                    onIncrement={() => incrementCount(db!, category.id)}
+                  />
+                  <div className="item-tools">
+                    <button
+                      type="button"
+                      className="mini"
+                      aria-label={`Photos for ${category.category}`}
+                      title="View photos"
+                      onClick={() => navigate(`/loads/${loadId}/gallery?category=${category.id}`)}
+                    >
+                      <Icon name="images" />
+                    </button>
+                    <button
+                      type="button"
+                      className="mini danger"
+                      aria-label={`Remove ${category.category}`}
+                      title="Remove"
+                      onClick={() => handleRemoveCategory(category.id, category.category)}
+                    >
+                      <Icon name="trash3" />
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
           </div>
 
           <div className="d-flex align-items-center gap-2 mt-3">

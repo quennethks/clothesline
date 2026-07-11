@@ -4,6 +4,7 @@ import { useAuthToken } from '../auth/useAuthToken'
 import type { ClotheslineDatabase } from '../db'
 import { startReplication } from '../db/replication'
 import { startUploadQueue } from '../photos/uploadQueue'
+import { useOnline } from './useOnline'
 import { useSyncStatus } from './useSyncStatus'
 
 // Starts replication once the database and an access token are available,
@@ -32,12 +33,25 @@ export function SyncStatusIndicator() {
     }
   }, [db])
 
-  const status = useSyncStatus(replicationStates)
+  const replicationStatus = useSyncStatus(replicationStates)
+  const online = useOnline()
 
-  const label = status === 'active' ? 'Syncing…' : status === 'error' ? 'Sync error' : 'Synced'
+  // Offline is expected, not broken (spec §6.4) — and while offline every
+  // replication attempt errors, so it would otherwise read "Sync error" for
+  // the entire time the app is doing exactly what it's designed to do.
+  const status = online ? replicationStatus : 'offline'
+  const label =
+    status === 'offline'
+      ? 'Offline — changes saved'
+      : status === 'active'
+        ? 'Syncing…'
+        : status === 'error'
+          ? 'Sync error — will retry'
+          : 'Synced'
 
   return (
     <span className="sync-status" data-testid="sync-status" data-status={status}>
+      <span className="sync-dot" aria-hidden="true" />
       {label}
     </span>
   )
