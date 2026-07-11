@@ -42,7 +42,12 @@ var storage = builder.AddAzureStorage("storage")
 var blobs = storage.AddBlobs("blobs");
 
 // --- identity infra ---
-var mailpit = builder.AddMailPit("mailpit");
+// Fixed web-UI port: the e2e suite reads Zitadel's OTP emails out of Mailpit's
+// HTTP API to complete passwordless sign-in (spec §10.3), so its address has to
+// be predictable rather than a per-run proxy port.
+const int mailpitPort = 8025;
+var mailpit = builder.AddMailPit("mailpit")
+    .WithEndpoint("http", endpoint => endpoint.Port = mailpitPort);
 
 // Fixed ports for web/zitadel/login-v2: OIDC redirect URIs and CORS origins
 // need to stay stable across `aspire run` restarts (Aspire's dynamic proxy

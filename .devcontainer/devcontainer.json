@@ -13,6 +13,9 @@
     },
     "ghcr.io/va-h/devcontainers-features/uv:1": {}
   },
+  "containerEnv": {
+    "PLAYWRIGHT_BROWSERS_PATH": "/opt/pw-browsers"
+  },
   "postCreateCommand": "bash .devcontainer/post-create.sh",
   "customizations": {
     "vscode": {
