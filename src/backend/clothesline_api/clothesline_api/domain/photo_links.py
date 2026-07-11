@@ -3,7 +3,11 @@ import uuid
 from clothesline_db.models import PhotoLink, PhotoLinkEntityType
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from clothesline_api.domain.common import PushValidationError, resolve_owner_user_id
+from clothesline_api.domain.common import (
+    PushNotReadyError,
+    PushValidationError,
+    resolve_owner_user_id,
+)
 
 
 class PhotoLinkValidator:
@@ -29,5 +33,9 @@ class PhotoLinkValidator:
         owner_user_id = await resolve_owner_user_id(
             session, PhotoLinkEntityType(entity_type), entity_id
         )
-        if owner_user_id is None or owner_user_id != user_id:
+        if owner_user_id is None:
+            # The target (typically the auto-created LoadItem, spec §4.4) is
+            # still in its own collection's push queue — retry, don't reject.
+            raise PushNotReadyError(f"photo link target {entity_id} has not replicated yet")
+        if owner_user_id != user_id:
             raise PushValidationError("photo link target is not yours")

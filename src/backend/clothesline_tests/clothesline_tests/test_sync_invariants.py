@@ -1,7 +1,8 @@
 import uuid
 
-from clothesline_db.models import User
+from clothesline_db.models import Load, LoadStatus, User
 from httpx import AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from clothesline_tests.conftest import PLACEHOLDER_TS, load_doc, push_create, push_update
 
@@ -66,3 +67,72 @@ async def test_count_received_stays_writable_after_send(
     refetched = (await authed_client.get("/sync/load_item_categories")).json()["documents"][0]
     assert refetched["count_received"] == 3
     assert refetched["count_sent"] == 3
+
+
+async def test_photo_link_push_retries_when_its_target_has_not_replicated_yet(
+    authed_client: AsyncClient, test_user: User
+) -> None:
+    """Collections replicate independently, so a photo_link can reach the
+    server before the load_item it points at. That must be a retryable failure,
+    not a conflict: a rejected create has no master doc to return, and the
+    client would read the empty conflict as success and drop the link forever
+    (which is exactly what silently lost photo links before)."""
+    photo_id = str(uuid.uuid4())
+    unknown_item_id = str(uuid.uuid4())
+
+    resp = await authed_client.post(
+        "/sync/photo_links",
+        json=[
+            {
+                "new_document_state": {
+                    "id": str(uuid.uuid4()),
+                    "photo_id": photo_id,
+                    "entity_type": "load_item",
+                    "entity_id": unknown_item_id,
+                    "is_primary": True,
+                    "created_at": PLACEHOLDER_TS,
+                    "updated_at": PLACEHOLDER_TS,
+                    "_deleted": False,
+                },
+                "assumed_master_state": None,
+            }
+        ],
+    )
+
+    assert resp.status_code == 409
+
+
+async def test_photo_link_push_rejects_another_users_target_as_a_conflict(
+    authed_client: AsyncClient, test_user: User, db_session: AsyncSession
+) -> None:
+    """A target that *does* exist but belongs to someone else is a genuine
+    rejection — a conflict, not a retry (retrying would spin forever)."""
+    other = User(sub="zitadel|other-owner", email="other-owner@example.com")
+    db_session.add(other)
+    await db_session.commit()
+
+    other_load_id = uuid.uuid4()
+    db_session.add(Load(id=other_load_id, user_id=other.id, name="theirs", status=LoadStatus.draft))
+    await db_session.commit()
+
+    resp = await authed_client.post(
+        "/sync/photo_links",
+        json=[
+            {
+                "new_document_state": {
+                    "id": str(uuid.uuid4()),
+                    "photo_id": str(uuid.uuid4()),
+                    "entity_type": "load",
+                    "entity_id": str(other_load_id),
+                    "is_primary": True,
+                    "created_at": PLACEHOLDER_TS,
+                    "updated_at": PLACEHOLDER_TS,
+                    "_deleted": False,
+                },
+                "assumed_master_state": None,
+            }
+        ],
+    )
+
+    assert resp.status_code == 200
+    assert resp.json() == [None]  # conflict entry: no master doc for a rejected create

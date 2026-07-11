@@ -3,7 +3,7 @@ import uuid
 from clothesline_db.models import Load, LoadItemCategory, LoadStatus
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from clothesline_api.domain.common import PushValidationError
+from clothesline_api.domain.common import PushNotReadyError, PushValidationError
 
 
 class LoadItemCategoryValidator:
@@ -23,7 +23,10 @@ class LoadItemCategoryValidator:
             raise PushValidationError("load_id is required")
 
         load = await session.get(Load, load_id)
-        if load is None or load.user_id != user_id:
+        if load is None:
+            # The Load's own push hasn't landed yet — retry, don't reject.
+            raise PushNotReadyError(f"load {load_id} has not replicated yet")
+        if load.user_id != user_id:
             raise PushValidationError("not your load")
 
         if existing is None:

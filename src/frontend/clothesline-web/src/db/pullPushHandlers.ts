@@ -70,12 +70,17 @@ export function createPushHandler<RxDocType>(collectionName: string, getToken: (
       throw new Error(`push ${collectionName} failed: ${res.status}`)
     }
     const conflicts = (await res.json()) as (RxDocType | null)[]
-    // A `null` conflict entry means a rejected create with no prior master
-    // doc to hand back (spec §5.1/§5.2's polymorphic photo_links edge
-    // case) — RxDB's push contract has no "drop this local doc" signal, so
-    // it's dropped from what we report back rather than surfaced as a
-    // resolvable conflict. Accepted simplification: nothing produces this
-    // case yet (M6 is the first UI that creates photo_links).
+    // A `null` conflict entry is a rejected *create* — there's no prior master
+    // doc to hand back. RxDB's push contract has no "drop this local doc"
+    // signal, so it's dropped from what we report rather than surfaced as a
+    // resolvable conflict.
+    //
+    // This is now only reachable for a genuinely illegal write (a doc naming
+    // another user's parent). The far more common case — a child pushed before
+    // its parent replicated, which is routine given each collection has its own
+    // queue — is a 409 from the server, so the `!res.ok` throw above makes RxDB
+    // retry the batch instead. That distinction matters: treating the race as a
+    // null conflict silently and permanently dropped photo links.
     return conflicts.filter((doc): doc is RxDocType => doc !== null)
   }
 }

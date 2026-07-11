@@ -5,7 +5,7 @@ from typing import Any
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from clothesline_api.domain.common import PushValidationError
+from clothesline_api.domain.common import PushNotReadyError, PushValidationError
 from clothesline_api.sync.registry import REGISTRY, SyncCollection
 from clothesline_api.sync.schemas import row_to_wire
 
@@ -46,9 +46,22 @@ async def handle_push(
 
     conflicts: list[dict[str, Any] | None] = []
     for row in rows:
-        result = await _apply_one(
-            session, collection, user_id, row["new_document_state"], row.get("assumed_master_state")
-        )
+        try:
+            result = await _apply_one(
+                session,
+                collection,
+                user_id,
+                row["new_document_state"],
+                row.get("assumed_master_state"),
+            )
+        except PushNotReadyError as exc:
+            # Not a conflict — the parent just hasn't replicated yet (each
+            # collection has its own independent push queue, spec §7). Fail the
+            # whole batch so RxDB retries it; returning a conflict here would
+            # hand back an empty master doc for a create, which the client
+            # reads as "accepted" and drops. Nothing is committed.
+            await session.rollback()
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         if result is not _APPLIED:
             conflicts.append(result)  # type: ignore[arg-type]
 

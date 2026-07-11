@@ -20,6 +20,21 @@ class PushValidationError(Exception):
     write reverts on the client's next merge instead of getting a 4xx."""
 
 
+class PushNotReadyError(Exception):
+    """Raised when a doc's parent hasn't replicated *yet* — not a rule
+    violation, just an ordering race.
+
+    Each collection replicates independently (spec §7), so a child can reach
+    the server before its parent: a photo_link naming a load_item that is
+    still in the load_items collection's own push queue, for instance. Its
+    ownership can't be resolved yet, but rejecting it as a conflict would be
+    wrong and destructive — a rejected *create* has no master doc to hand
+    back, so the client would take the empty conflict as success and drop the
+    row forever. Instead the push fails outright and RxDB retries it, by which
+    time the parent has landed.
+    """
+
+
 class PushValidator(Protocol):
     async def validate(
         self,

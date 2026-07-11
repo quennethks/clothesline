@@ -5,7 +5,7 @@ from clothesline_db.models import Load, LoadItem, LoadItemCategory
 from sqlalchemy import Select, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from clothesline_api.domain.common import PushValidationError
+from clothesline_api.domain.common import PushNotReadyError, PushValidationError
 
 
 def _select_owner_user_id(category_id: uuid.UUID) -> Select[Any]:
@@ -38,5 +38,8 @@ class LoadItemValidator:
 
         result = await session.execute(_select_owner_user_id(category_id))
         owner_user_id = result.scalar_one_or_none()
-        if owner_user_id is None or owner_user_id != user_id:
+        if owner_user_id is None:
+            # The parent category hasn't replicated yet — retry, don't reject.
+            raise PushNotReadyError(f"category {category_id} has not replicated yet")
+        if owner_user_id != user_id:
             raise PushValidationError("not your load item")
