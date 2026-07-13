@@ -1,0 +1,125 @@
+name: Deploy
+
+# Provisions + deploys both ACA environments from the Aspire model (spec §11).
+#
+# This workflow is a TRIGGER, not a deployment tool. Everything about *what* is
+# deployed and *how* lives in aspire/Clothesline.AppHost/apphost.cs and is run by
+# the Aspire CLI. See CLAUDE.md, "Aspire owns the deployment pipeline".
+#
+# NOT YET RUN against a real subscription — see ops/DEPLOY.md for what is
+# expected to break first. Manual-dispatch only until it has landed once.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Aspire environment name
+        required: true
+        default: Production
+
+permissions:
+  id-token: write # federated credential for Azure login (no stored secrets)
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    env:
+      ASPIRE_ENV: ${{ inputs.environment }}
+      # Aspire resolves parameters from the `Parameters:` configuration section,
+      # so the environment-variable form is `Parameters__<name>` (the standard
+      # .NET double-underscore section separator). Verified empirically: with
+      # this set, `aspire publish --non-interactive` resolves the parameter
+      # silently; without it, it warns "Failed to save parameter identity-domain
+      # to deployment state" and the value never reaches the Bicep. There is no
+      # ASPIRE_PARAMETER_* convention — that form is silently ignored, which
+      # would leave an unattended deploy waiting on a prompt that never comes.
+      #
+      # Zitadel bakes ExternalDomain into token issuers and session cookies at
+      # first boot, so the identity origin must be final before the first deploy
+      # (spec §5.6b). Required — the AppHost has no default for it.
+      Parameters__identity-domain: ${{ vars.IDENTITY_DOMAIN }}
+      # Empty on the first deploy: Azure will not issue a managed certificate
+      # until DNS proves domain ownership, and the DNS records reference the
+      # container app's verification id, which does not exist until it is
+      # deployed. See ops/DEPLOY.md — the binding is a deliberate two-pass flow.
+      Parameters__certificate-name: ${{ vars.IDENTITY_CERTIFICATE_NAME }}
+      # Attaching the hostname is a separate gate from the certificate, and has to
+      # be: Azure won't attach a domain whose DNS doesn't resolve yet, and won't
+      # issue a certificate for a domain that isn't attached. Set to "true" once the
+      # CNAME/TXT records exist (ops/DEPLOY.md §3). Unset means false — which is what
+      # a first deploy into a fresh environment needs.
+      Parameters__bind-identity-domain: ${{ vars.IDENTITY_DOMAIN_BOUND }}
+      # `azure/login` below authenticates the ARM credential but does NOT tell
+      # Aspire *where* to provision: it does not read the az CLI's active
+      # subscription. Without these, the deploy fails in create-provisioning-context
+      # with "An Azure subscription id is required. Set the Azure:SubscriptionId
+      # configuration value." Same `Section__Key` configuration binding as the
+      # parameters above.
+      Azure__SubscriptionId: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      Azure__Location: ${{ vars.AZURE_LOCATION }}
+      Azure__ResourceGroup: ${{ vars.AZURE_RESOURCE_GROUP }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - uses: astral-sh/setup-uv@v4
+        with:
+          python-version: "3.12"
+
+      - name: Azure login (federated)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Install the Aspire CLI
+        run: dotnet tool install -g aspire.cli --prerelease
+
+      # Infrastructure first, on its own: the databases must exist before the
+      # migration below, and the ACA environment's domain must exist before the
+      # web image is built (its API URL is baked in at build time — spec §5.2).
+      - name: Provision infrastructure
+        run: aspire do provision-infra --non-interactive -e "$ASPIRE_ENV"
+
+      # Ordered BEFORE the app deploy on purpose (spec §11.2): the API must never
+      # go live against a schema that hasn't caught up with it. Runs from the
+      # shared clothesline_db package, not as a standing ACA job.
+      #
+      # FALLBACK (`az`, per CLAUDE.md's rule): the connection string is written to
+      # Key Vault by the Aspire model, and Aspire 13.4's own pipeline-step API —
+      # which is what this step *should* be — is present in the assemblies but
+      # undocumented, so it can't be written against with any confidence yet.
+      # Revisit when Aspire documents PipelineStep; this whole step then collapses
+      # into a dependsOn edge in apphost.cs.
+      - name: Run database migrations
+        working-directory: src/backend/clothesline_db
+        run: |
+          conn=$(az keyvault secret show \
+            --vault-name "$(az keyvault list --query "[?starts_with(name,'pgapp')].name" -o tsv | head -1)" \
+            --name connectionstrings--clothesline-db --query value -o tsv)
+          uv sync --all-packages
+          CLOTHESLINE_DB_URL="" ConnectionStrings__clothesline_db="$conn" DB_SSL_MODE=require \
+            uv run alembic -c alembic.ini upgrade head
+
+      # Builds and pushes the images and deploys every container app + job.
+      - name: Deploy
+        run: aspire deploy --non-interactive -e "$ASPIRE_ENV"
+
+      # The OIDC app registration only exists once this has run against a live
+      # Zitadel, and the API serves the resulting client_id over /config — so the
+      # API needs a new revision afterwards to pick the secret up.
+      #
+      # FALLBACK (`az`): same reason as the migration step — an ACA Job is
+      # deployed by Aspire but not *triggered* by it.
+      - name: Register the OIDC application
+        run: |
+          rg=$(az group list --query "[?contains(name,'${ASPIRE_ENV}')].name" -o tsv | head -1)
+          az containerapp job start -g "$rg" -n zitadel-oidc-bootstrap
+          az containerapp revision restart -g "$rg" -n clothesline-api || true
+
+      - name: Smoke the deployment
+        run: curl -fsS "https://${{ vars.IDENTITY_DOMAIN }}/debug/healthz"

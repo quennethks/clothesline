@@ -1,0 +1,27 @@
+# Both PATs below are minted once, by `zitadel start-from-init` against an empty
+# database, and are never reissued — editing this file has no effect on an
+# already-initialized instance. login-client.pat is also a *runtime* credential
+# (mounted into Login V2 as ZITADEL_SERVICE_USER_TOKEN_FILE), so an expiry that
+# falls due takes sign-in down with no rotation path short of wiping the identity
+# database. Hence the far-future date, which is Zitadel's own default for these
+# bootstrap users. Do not shorten it without first building PAT rotation.
+FirstInstance:
+  Org:
+    # A Machine user defined directly under Org (as opposed to under
+    # LoginClient) is automatically granted the IAM_OWNER role — used by
+    # ops/zitadel/bootstrap_oidc_app.py to create the clothesline-web OIDC
+    # application via the Management API (there is no declarative
+    # FirstInstance.Org.Projects/OIDCApps section — apps must be created
+    # through the API, not this bootstrap file).
+    Machine:
+      Machine:
+        Username: clothesline-admin
+        Name: Automatically Initialized Clothesline Admin
+      Pat:
+        ExpirationDate: "2519-04-01T08:45:00Z"
+    LoginClient:
+      Machine:
+        Username: login-client
+        Name: Automatically Initialized IAM Login Client
+      Pat:
+        ExpirationDate: "2519-04-01T08:45:00Z"

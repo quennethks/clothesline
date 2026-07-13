@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LaundryTrack — Prototype</title>
+<link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.3/css/bootstrap.min.css" rel="stylesheet">
+<!-- Bootstrap Icons rendered as inline SVG below (no external icon-font dependency) -->
+<style>
+  :root{
+    --aqua-900:#0b3d40; --aqua-700:#0f6b70; --aqua-600:#118a90;
+    --aqua-500:#16a9b0; --aqua-400:#2bc4cb; --aqua-300:#7fdfe3;
+    --aqua-100:#d6f4f5; --aqua-050:#eefafb;
+    --ink:#122a2c; --muted:#5c7477; --line:#d3e6e7; --bg:#f3f9f9;
+  }
+  *{-webkit-tap-highlight-color:transparent}
+  i.bi{display:inline-flex;align-items:center;justify-content:center;width:1em;height:1em;vertical-align:-.125em}
+  i.bi svg{width:1em;height:1em;fill:currentColor}
+  body{background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+
+  /* ---- device frame for phone view ---- */
+  .stage{min-height:100vh;display:flex;justify-content:center;padding:24px 12px 60px}
+  .app{width:100%;max-width:520px}
+  @media(min-width:992px){ .app{max-width:960px} }
+
+  /* ---- top bar ---- */
+  .appbar{
+    position:sticky;top:0;z-index:20;background:var(--aqua-600);color:#fff;
+    padding:14px 16px;display:flex;align-items:center;gap:12px;
+    box-shadow:0 2px 10px rgba(15,107,112,.18)
+  }
+  .appbar .title{font-weight:700;font-size:1.05rem;letter-spacing:.2px;flex:1;min-width:0;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .iconbtn{
+    background:transparent;border:0;color:#fff;width:40px;height:40px;border-radius:12px;
+    display:inline-flex;align-items:center;justify-content:center;font-size:1.25rem;cursor:pointer;
+    transition:background .15s
+  }
+  .iconbtn:hover{background:rgba(255,255,255,.16)}
+  .iconbtn.ghost{color:var(--aqua-700);background:var(--aqua-100)}
+  .iconbtn.ghost:hover{background:var(--aqua-300)}
+
+  .screen-body{padding:18px 16px 40px}
+
+  /* filter chips */
+  .filter-row{display:flex;gap:8px;overflow-x:auto;padding-bottom:14px;margin-bottom:2px;
+    scrollbar-width:none}
+  .filter-row::-webkit-scrollbar{display:none}
+  .chip{flex:0 0 auto;border:1px solid var(--line);background:#fff;color:var(--muted);
+    font-size:.82rem;font-weight:600;padding:7px 15px;border-radius:20px;cursor:pointer;
+    display:inline-flex;align-items:center;gap:6px;transition:.15s;white-space:nowrap}
+  .chip:hover{border-color:var(--aqua-300);color:var(--aqua-700)}
+  .chip.active{background:var(--aqua-600);border-color:var(--aqua-600);color:#fff}
+  .chip .badge-count{background:rgba(0,0,0,.08);border-radius:20px;font-size:.7rem;font-weight:700;
+    padding:1px 7px;color:inherit}
+  .chip.active .badge-count{background:rgba(255,255,255,.25)}
+  .empty-note{text-align:center;color:var(--muted);padding:40px 10px;font-size:.9rem}
+
+  /* ---- home cards ---- */
+  .load-card{
+    background:#fff;border:1px solid var(--line);border-radius:16px;padding:14px 14px;
+    display:flex;align-items:center;gap:14px;cursor:pointer;
+    transition:box-shadow .15s,border-color .15s,transform .05s
+  }
+  .load-card:hover{box-shadow:0 6px 18px rgba(17,138,144,.12);border-color:var(--aqua-300)}
+  .load-card:active{transform:scale(.995)}
+  .load-card .meta{flex:1;min-width:0}
+  .load-card .lname{font-weight:700;font-size:1rem;line-height:1.2}
+  .load-card .shop{color:var(--muted);font-size:.82rem}
+  .bag{position:relative;display:inline-flex;align-items:center;justify-content:center;
+    width:44px;height:44px;border-radius:12px;background:var(--aqua-050);color:var(--aqua-700);font-size:1.4rem}
+  .bag .count{position:absolute;top:-6px;right:-6px;background:var(--aqua-600);color:#fff;
+    font-size:.7rem;font-weight:700;min-width:20px;height:20px;border-radius:20px;
+    display:flex;align-items:center;justify-content:center;padding:0 5px}
+  .status-pill{font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.4px;
+    padding:3px 9px;border-radius:20px;display:inline-block}
+  .st-draft{background:#fff3d6;color:#8a6100}
+  .st-sent{background:var(--aqua-100);color:var(--aqua-700)}
+  .st-recv{background:#e2f5e5;color:#1f7a37}
+  .st-closed{background:#eceff1;color:#546066}
+
+  .card-actions{display:flex;gap:4px}
+  .mini{width:36px;height:36px;border-radius:10px;border:1px solid var(--line);background:#fff;
+    color:var(--muted);display:inline-flex;align-items:center;justify-content:center;font-size:1rem;cursor:pointer;
+    transition:.15s}
+  .mini:hover{color:var(--aqua-700);border-color:var(--aqua-300);background:var(--aqua-050)}
+  .mini.danger:hover{color:#c0362c;border-color:#f2b8b3;background:#fdeeec}
+
+  /* overflow dropdown */
+  .ovf{position:relative}
+  .ovf-menu{position:absolute;right:0;top:calc(100% + 4px);z-index:30;background:#fff;
+    border:1px solid var(--line);border-radius:12px;box-shadow:0 8px 24px rgba(17,138,144,.18);
+    padding:6px;min-width:170px;display:none}
+  .ovf.open .ovf-menu{display:block}
+  .ovf-item{display:flex;align-items:center;gap:10px;width:100%;border:0;background:transparent;
+    padding:9px 10px;border-radius:8px;font-size:.9rem;color:var(--ink);cursor:pointer;text-align:left}
+  .ovf-item:hover{background:var(--aqua-050);color:var(--aqua-700)}
+  .ovf-item.danger:hover{background:#fdeeec;color:#c0362c}
+  /* show inline icons by default; collapse to overflow on narrow cards */
+  .inline-actions{display:flex;gap:4px}
+  .ovf{display:none}
+  @media(max-width:420px){
+    .inline-actions{display:none}
+    .ovf{display:inline-block}
+  }
+
+  /* ---- load detail ---- */
+  .field-label{font-size:.72rem;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:var(--muted)}
+  .total-hero{text-align:center;padding:6px 0 14px}
+  .total-hero .num{font-size:2.4rem;font-weight:800;color:var(--aqua-700);line-height:1}
+  .total-hero .lbl{font-size:.8rem;letter-spacing:1px;text-transform:uppercase;color:var(--muted)}
+
+  .items-head{display:flex;align-items:center;justify-content:space-between;margin:6px 0 4px}
+  .items-head h6{margin:0;font-weight:700}
+
+  .item-row{display:flex;align-items:center;gap:10px;padding:12px 0;border-bottom:1px solid var(--line)}
+  .item-row .iname{flex:1;font-weight:600}
+  .stepper{display:inline-flex;align-items:center;gap:6px}
+  .step-btn{width:32px;height:32px;border-radius:9px;border:1px solid var(--line);background:#fff;
+    font-size:1.1rem;line-height:1;color:var(--aqua-700);cursor:pointer;display:inline-flex;align-items:center;justify-content:center}
+  .step-btn:hover{background:var(--aqua-050);border-color:var(--aqua-300)}
+  .qty{width:52px;text-align:center;border:1px solid var(--line);border-radius:9px;height:32px;font-weight:700}
+  .qty:focus{outline:2px solid var(--aqua-300);border-color:var(--aqua-400)}
+  .item-tools{display:flex;gap:4px;margin-left:2px}
+  .thumb{width:44px;height:32px;border-radius:7px;background:linear-gradient(135deg,var(--aqua-100),var(--aqua-300));
+    display:inline-flex;align-items:center;justify-content:center;color:var(--aqua-700);font-size:1rem}
+  .noneditable-note{color:var(--muted);font-size:.78rem;font-style:italic;margin-top:12px}
+
+  /* count screen */
+  .count-wrap{text-align:center;padding:26px 8px}
+  .count-wrap h4{font-weight:800;letter-spacing:.5px}
+  .count-q{color:var(--muted);margin-bottom:22px}
+  .count-input{width:130px;height:130px;border-radius:50%;border:3px solid var(--aqua-400);
+    text-align:center;font-size:2.4rem;font-weight:800;color:var(--aqua-700);background:#fff}
+  .count-input:focus{outline:none;box-shadow:0 0 0 5px var(--aqua-100)}
+  .expected{margin-top:26px;color:var(--muted);font-weight:600}
+
+  /* receiving grid header */
+  .recv-head{display:grid;grid-template-columns:1fr auto auto auto;gap:8px;align-items:center;
+    font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);
+    padding-bottom:6px;border-bottom:2px solid var(--line)}
+  .recv-row{display:grid;grid-template-columns:1fr auto auto auto;gap:8px;align-items:center;
+    padding:12px 0;border-bottom:1px solid var(--line)}
+  .sent-badge{width:30px;height:30px;border-radius:50%;background:var(--aqua-600);color:#fff;
+    font-weight:700;display:inline-flex;align-items:center;justify-content:center;font-size:.85rem;cursor:pointer}
+  .sent-badge:hover{background:var(--aqua-700)}
+
+  .btn-aqua{background:var(--aqua-600);border-color:var(--aqua-600);color:#fff;font-weight:600}
+  .btn-aqua:hover{background:var(--aqua-700);border-color:var(--aqua-700);color:#fff}
+  .btn-outline-aqua{border-color:var(--aqua-400);color:var(--aqua-700);font-weight:600}
+  .btn-outline-aqua:hover{background:var(--aqua-050);color:var(--aqua-700)}
+
+  .desktop-grid{display:grid;grid-template-columns:1fr;gap:12px}
+  @media(min-width:992px){ .desktop-grid{grid-template-columns:1fr 1fr} }
+
+  .center-card{background:#fff;border:1px solid var(--line);border-radius:18px;
+    padding:22px 20px;max-width:640px;margin:0 auto;box-shadow:0 8px 26px rgba(17,138,144,.06)}
+
+  .gallery-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+  @media(min-width:768px){ .gallery-grid{grid-template-columns:repeat(4,1fr)} }
+  .photo{aspect-ratio:1;border-radius:12px;background:linear-gradient(135deg,var(--aqua-100),var(--aqua-300));
+    display:flex;align-items:center;justify-content:center;color:var(--aqua-700);font-size:1.6rem;
+    cursor:pointer;transition:transform .1s,box-shadow .15s;position:relative;overflow:hidden}
+  .photo:hover{transform:scale(1.02);box-shadow:0 6px 16px rgba(17,138,144,.2)}
+  .photo span{position:absolute;bottom:5px;right:7px;font-size:.65rem;font-weight:700;
+    color:var(--aqua-900);opacity:.7}
+
+  .screen{display:none}
+  .screen.active{display:block;animation:fade .18s ease}
+  @keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+
+  /* prototype helper nav */
+  .proto-nav{position:fixed;bottom:14px;left:50%;transform:translateX(-50%);z-index:50;
+    background:var(--aqua-900);color:#fff;border-radius:30px;padding:6px 8px;display:flex;gap:4px;
+    box-shadow:0 8px 24px rgba(0,0,0,.25);max-width:94vw;overflow:auto}
+  .proto-nav button{background:transparent;border:0;color:#bfe9eb;font-size:.72rem;font-weight:600;
+    padding:6px 11px;border-radius:20px;white-space:nowrap;cursor:pointer}
+  .proto-nav button.active,.proto-nav button:hover{background:var(--aqua-600);color:#fff}
+</style>
+</head>
+<body>
+<script>
+/* Bootstrap Icons 1.11.3 path data (viewBox 0 0 16 16) — inlined so no font CDN is needed */
+const BI_PATHS = {
+  "arrow-left":'<path fill-rule="evenodd" d="M15 8a.5.5 0 0 0-.5-.5H2.707l3.147-3.146a.5.5 0 1 0-.708-.708l-4 4a.5.5 0 0 0 0 .708l4 4a.5.5 0 0 0 .708-.708L2.707 8.5H14.5A.5.5 0 0 0 15 8z"/>',
+  "plus-lg":'<path fill-rule="evenodd" d="M8 2a.5.5 0 0 1 .5.5v5h5a.5.5 0 0 1 0 1h-5v5a.5.5 0 0 1-1 0v-5h-5a.5.5 0 0 1 0-1h5v-5A.5.5 0 0 1 8 2Z"/>',
+  "send":'<path d="M15.854.146a.5.5 0 0 1 .11.54l-5.819 14.547a.75.75 0 0 1-1.329.124l-3.178-4.995L.643 7.184a.75.75 0 0 1 .124-1.33L15.314.037a.5.5 0 0 1 .54.11ZM6.636 10.07l2.761 4.338L14.13 2.576zm6.787-8.201L1.591 6.602l4.339 2.76z"/>',
+  "check-circle":'<path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14m0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16"/><path d="m10.97 4.97-.02.022-3.473 4.425-2.093-2.094a.75.75 0 0 0-1.06 1.06L6.97 11.03a.75.75 0 0 0 1.079-.02l3.992-4.99a.75.75 0 0 0-1.071-1.05"/>',
+  "bag":'<path d="M8 1a2.5 2.5 0 0 1 2.5 2.5V4h-5v-.5A2.5 2.5 0 0 1 8 1m3.5 3v-.5a3.5 3.5 0 1 0-7 0V4H1v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V4zM2 5h12v9a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1z"/>',
+  "pencil":'<path d="M12.146.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1 0 .708l-10 10a.5.5 0 0 1-.168.11l-5 2a.5.5 0 0 1-.65-.65l2-5a.5.5 0 0 1 .11-.168zM11.207 2.5 13.5 4.793 14.793 3.5 12.5 1.207zm1.586 3L10.5 3.207 4 9.707V10h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.293zm-9.761 5.175-.106.106-1.528 3.821 3.821-1.528.106-.106A.5.5 0 0 1 5 12.5V12h-.5a.5.5 0 0 1-.5-.5V11h-.5a.5.5 0 0 1-.468-.325"/>',
+  "camera":'<path d="M15 12a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h1.172a3 3 0 0 0 2.12-.879l.83-.828A1 1 0 0 1 6.827 3h2.344a1 1 0 0 1 .707.293l.828.828A3 3 0 0 0 12.828 5H14a1 1 0 0 1 1 1zM2 4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-1.172a2 2 0 0 1-1.414-.586l-.828-.828A2 2 0 0 0 9.172 2H6.828a2 2 0 0 0-1.414.586l-.828.828A2 2 0 0 1 3.172 4z"/><path d="M8 11a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5m0 1a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7M3 6.5a.5.5 0 1 1-1 0 .5.5 0 0 1 1 0"/>',
+  "images":'<path d="M4.502 9a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3"/><path d="M14.002 13a2 2 0 0 1-2 2h-10a2 2 0 0 1-2-2V5A2 2 0 0 1 2 3a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v8a2 2 0 0 1-1.998 2M14 2H4a1 1 0 0 0-1 1h9.002a2 2 0 0 1 2 2v7A1 1 0 0 0 15 11V3a1 1 0 0 0-1-1M2.002 4a1 1 0 0 0-1 1v8l2.646-2.354a.5.5 0 0 1 .63-.062l2.66 1.773 3.71-3.71a.5.5 0 0 1 .577-.094L14 12.5V5a1 1 0 0 0-1-1z"/>',
+  "image":'<path d="M6.002 5.5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0"/><path d="M2.002 1a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V3a2 2 0 0 0-2-2zm12 1a1 1 0 0 1 1 1v6.5l-3.777-1.947a.5.5 0 0 0-.577.093l-3.71 3.71-2.66-1.772a.5.5 0 0 0-.63.062L1.002 12V3a1 1 0 0 1 1-1z"/>',
+  "trash3":'<path d="M6.5 1h3a.5.5 0 0 1 .5.5v1H6v-1a.5.5 0 0 1 .5-.5M11 2.5v-1A1.5 1.5 0 0 0 9.5 0h-3A1.5 1.5 0 0 0 5 1.5v1H1.5a.5.5 0 0 0 0 1h.538l.853 10.66A2 2 0 0 0 4.885 16h6.23a2 2 0 0 0 1.994-1.84l.853-10.66h.538a.5.5 0 0 0 0-1zm1.958 1-.846 10.58a1 1 0 0 1-.997.92h-6.23a1 1 0 0 1-.997-.92L3.042 3.5zm-7.487 1a.5.5 0 0 1 .528.47l.5 8.5a.5.5 0 0 1-.998.06L5 5.03a.5.5 0 0 1 .47-.53Zm5.058 0a.5.5 0 0 1 .47.53l-.5 8.5a.5.5 0 1 1-.998-.06l.5-8.5a.5.5 0 0 1 .528-.47M8 4.5a.5.5 0 0 1 .5.5v8.5a.5.5 0 0 1-1 0V5a.5.5 0 0 1 .5-.5"/>',
+  "copy":'<path fill-rule="evenodd" d="M4 2a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2zm2-1a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1zM2 5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-1h1v1a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h1v1z"/>',
+  "three-dots-vertical":'<path d="M9.5 13a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0m0-5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0m0-5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0"/>',
+  "lock":'<path d="M8 1a2 2 0 0 1 2 2v4H6V3a2 2 0 0 1 2-2m3 6V3a3 3 0 0 0-6 0v4a2 2 0 0 0-2 2v5a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2M5 8h6a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1"/>',
+  "file-earmark-text":'<path d="M5 4a.5.5 0 0 0 0 1h6a.5.5 0 0 0 0-1zm-.5 2.5A.5.5 0 0 1 5 6h6a.5.5 0 0 1 0 1H5a.5.5 0 0 1-.5-.5M5 8a.5.5 0 0 0 0 1h6a.5.5 0 0 0 0-1zm0 2a.5.5 0 0 0 0 1h3a.5.5 0 0 0 0-1z"/><path d="M9.5 0H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V4.5zm0 1v2A1.5 1.5 0 0 0 11 4.5h2V14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1z"/>',
+  "save":'<path d="M2 1a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V4.207a1 1 0 0 0-.293-.707L12.5.293A1 1 0 0 0 11.793 0zm2 0h6.5v3.5A1.5 1.5 0 0 0 12 6H4a1.5 1.5 0 0 0-1.5 1.5V15h-.5a.5.5 0 0 1-.5-.5v-12A.5.5 0 0 1 2 1zm7.5 0h.293L15 3.207V14.5a.5.5 0 0 1-.5.5h-1V7.5A1.5 1.5 0 0 0 12 6H4A1.5 1.5 0 0 0 2.5 7.5V15H4V7.5a.5.5 0 0 1 .5-.5h7a.5.5 0 0 1 .5.5V15h1V3.5A2.5 2.5 0 0 0 11.5 1zM4 15h8v-2H4z"/>',
+};
+function injectIcons(root){
+  (root||document).querySelectorAll('i.bi').forEach(el=>{
+    if(el.firstChild) return; // already injected
+    const cls=[...el.classList].find(c=>c.startsWith('bi-'));
+    if(!cls)return;
+    const p=BI_PATHS[cls.slice(3)];
+    if(p) el.innerHTML=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">${p}</svg>`;
+  });
+}
+document.addEventListener('DOMContentLoaded',()=>injectIcons());
+</script>
+<div class="stage">
+<div class="app shadow-sm" style="background:var(--bg);border-radius:20px;overflow:hidden">
+
+  <!-- ============ HOME ============ -->
+  <section class="screen active" id="s-home">
+    <div class="appbar">
+      <div class="title">My Loads</div>
+      <button class="iconbtn ghost" title="New load" onclick="go('draft')"><i class="bi bi-plus-lg"></i></button>
+    </div>
+    <div class="screen-body">
+      <div class="filter-row" id="filterRow"></div>
+      <div class="desktop-grid" id="loadList"></div>
+    </div>
+  </section>
+
+  <!-- ============ LOAD DRAFT ============ -->
+  <section class="screen" id="s-draft">
+    <div class="appbar">
+      <button class="iconbtn" onclick="go('home')"><i class="bi bi-arrow-left"></i></button>
+      <div class="title d-none d-lg-block">Load Name</div>
+      <div class="flex-fill"></div>
+      <button class="iconbtn" title="Send load" onclick="go('sent')"><i class="bi bi-send"></i></button>
+      <button class="iconbtn" title="Save draft"><i class="bi bi-save"></i></button>
+    </div>
+    <div class="screen-body">
+      <div class="center-card">
+        <div class="d-flex align-items-center gap-2 mb-1">
+          <input class="form-control form-control-lg border-0 px-0 fw-bold" style="font-size:1.4rem;box-shadow:none" value="Whites Load">
+          <i class="bi bi-pencil text-muted"></i>
+        </div>
+        <div class="mb-3">
+          <div class="field-label mb-1">Shop</div>
+          <input class="form-control" placeholder="Select a shop" value="Corner Laundry">
+        </div>
+        <div class="total-hero">
+          <div class="num" id="draftTotal">3</div>
+          <div class="lbl">Total items</div>
+        </div>
+        <div class="items-head">
+          <h6>Items</h6>
+          <button class="btn btn-sm btn-outline-aqua"><i class="bi bi-plus-lg"></i> Add</button>
+        </div>
+        <div id="draftItems"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ LOAD SENT (non-editable) ============ -->
+  <section class="screen" id="s-sent">
+    <div class="appbar">
+      <button class="iconbtn" onclick="go('home')"><i class="bi bi-arrow-left"></i></button>
+      <div class="title">Whites Load</div>
+      <button class="iconbtn" title="Confirm sent" onclick="go('count')"><i class="bi bi-check-circle"></i></button>
+    </div>
+    <div class="screen-body">
+      <div class="center-card">
+        <div class="mb-2">
+          <div class="field-label">Shop</div>
+          <div class="fw-semibold">Corner Laundry</div>
+        </div>
+        <div class="total-hero">
+          <div class="num">3</div>
+          <div class="lbl">Total items</div>
+        </div>
+        <h6 class="fw-bold mb-2">Items</h6>
+        <div id="sentItems"></div>
+        <div class="noneditable-note"><i class="bi bi-lock"></i> This load has been sent and can no longer be edited.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ COUNT YOUR CLOTHES ============ -->
+  <section class="screen" id="s-count">
+    <div class="appbar">
+      <button class="iconbtn" onclick="go('sent')"><i class="bi bi-arrow-left"></i></button>
+      <div class="title text-center w-100" style="flex:1">Whites Load</div>
+      <span style="width:40px"></span>
+    </div>
+    <div class="screen-body">
+      <div class="center-card">
+        <div class="count-wrap">
+          <h4>Count your clothes</h4>
+          <div class="count-q">How many items did you receive?</div>
+          <input class="count-input" type="number" inputmode="numeric" placeholder="0">
+          <div class="expected">Expected count: 10</div>
+        </div>
+        <div class="d-flex justify-content-end gap-2 mt-2">
+          <button class="btn btn-outline-secondary" onclick="go('receiving')">Skip</button>
+          <button class="btn btn-aqua" onclick="go('receiving')">Continue</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ LOAD RECEIVING / CLOSED ============ -->
+  <section class="screen" id="s-receiving">
+    <div class="appbar">
+      <button class="iconbtn" onclick="go('home')"><i class="bi bi-arrow-left"></i></button>
+      <div class="title">Whites Load</div>
+      <button class="iconbtn" title="Save"><i class="bi bi-save"></i></button>
+    </div>
+    <div class="screen-body">
+      <div class="center-card">
+        <div class="mb-2">
+          <div class="field-label">Shop</div>
+          <div class="fw-semibold">Corner Laundry</div>
+        </div>
+        <div class="total-hero">
+          <div class="num">3</div>
+          <div class="lbl">Total sent</div>
+        </div>
+        <div class="recv-head">
+          <div>Items</div><div class="text-center">Sent</div><div></div><div class="text-center">Received</div>
+        </div>
+        <div id="recvItems"></div>
+        <div class="total-hero mt-2">
+          <div class="num" id="recvTotal">3</div>
+          <div class="lbl">Total received</div>
+        </div>
+        <div class="d-flex justify-content-end mt-2">
+          <button class="btn btn-aqua" onclick="go('home')">Close load</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ GALLERY ============ -->
+  <section class="screen" id="s-gallery">
+    <div class="appbar">
+      <button class="iconbtn" onclick="go('receiving')"><i class="bi bi-arrow-left"></i></button>
+      <div class="title">Photos</div>
+      <button class="iconbtn ghost" title="Add photo"><i class="bi bi-camera"></i></button>
+    </div>
+    <div class="screen-body">
+      <div class="center-card">
+        <div class="d-flex align-items-center justify-content-between mb-1">
+          <h6 class="fw-bold mb-0">Shirt</h6>
+          <span class="text-muted small">6 photos</span>
+        </div>
+        <div class="text-muted small mb-3">Whites Load · Corner Laundry</div>
+        <div class="gallery-grid" id="galleryGrid"></div>
+      </div>
+    </div>
+  </section>
+
+</div>
+</div>
+
+<!-- delete confirm modal -->
+<div class="modal fade" id="delModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content" style="border-radius:16px">
+      <div class="modal-body text-center p-4">
+        <div class="mb-2" style="font-size:2rem;color:#c0362c"><i class="bi bi-trash3"></i></div>
+        <h6 class="fw-bold">Delete this load?</h6>
+        <p class="text-muted small mb-4" id="delName">This can't be undone.</p>
+        <div class="d-flex gap-2">
+          <button class="btn btn-outline-secondary flex-fill" data-bs-dismiss="modal">Cancel</button>
+          <button class="btn btn-danger flex-fill" id="delConfirm">Delete</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- prototype screen jumper -->
+<nav class="proto-nav" id="protoNav">
+  <button data-s="home" class="active">Home</button>
+  <button data-s="draft">Draft</button>
+  <button data-s="sent">Sent</button>
+  <button data-s="count">Count</button>
+  <button data-s="receiving">Receiving</button>
+  <button data-s="gallery">Gallery</button>
+</nav>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.3/js/bootstrap.bundle.min.js"></script>
+<script>
+/* ---------- sample data ---------- */
+const loads = [
+  {name:"Whites Load", shop:"Corner Laundry", count:3, status:"draft"},
+  {name:"Delicates", shop:"Bubble & Fold", count:5, status:"sent"},
+  {name:"Bedsheets", shop:"Corner Laundry", count:2, status:"receiving"},
+  {name:"Work Shirts", shop:"QuickWash MNL", count:7, status:"closed"},
+  {name:"Kids Clothes", shop:"Bubble & Fold", count:9, status:"sent"},
+];
+const statusMap = {
+  draft:{cls:"st-draft",txt:"Draft",screen:"draft"},
+  sent:{cls:"st-sent",txt:"Sent",screen:"sent"},
+  receiving:{cls:"st-recv",txt:"Receiving",screen:"receiving"},
+  closed:{cls:"st-closed",txt:"Closed",screen:"receiving"},
+};
+const items = [{n:"Shirt",q:1},{n:"Pants",q:0},{n:"Underwear",q:2}];
+
+/* ---------- render home ---------- */
+const delModal = new bootstrap.Modal(document.getElementById('delModal'));
+let pendingDelete = null;
+let activeFilter = 'all';
+
+const FILTERS = [
+  {key:'all',label:'All'},
+  {key:'draft',label:'Draft'},
+  {key:'sent',label:'Sent'},
+  {key:'receiving',label:'Receiving'},
+  {key:'closed',label:'Closed'},
+];
+
+function renderFilters(){
+  const row=document.getElementById('filterRow');
+  row.innerHTML=FILTERS.map(f=>{
+    const n = f.key==='all' ? loads.length : loads.filter(l=>l.status===f.key).length;
+    return `<button class="chip ${activeFilter===f.key?'active':''}" onclick="setFilter('${f.key}')">
+      ${f.label}<span class="badge-count">${n}</span></button>`;
+  }).join('');
+}
+function setFilter(key){ activeFilter=key; renderFilters(); renderHome(); }
+
+function renderHome(){
+  const list = document.getElementById('loadList');
+  const shown = loads
+    .map((l,i)=>({l,i}))
+    .filter(({l})=> activeFilter==='all' || l.status===activeFilter);
+  if(shown.length===0){
+    list.innerHTML=`<div class="empty-note">No loads with this status yet.</div>`;
+    return;
+  }
+  list.innerHTML = shown.map(({l,i})=>{
+    const s = statusMap[l.status];
+    return `
+    <div class="load-card" onclick="go('${s.screen}')">
+      <div class="bag"><i class="bi bi-bag"></i><span class="count">${l.count}</span></div>
+      <div class="meta">
+        <div class="lname">${l.name}</div>
+        <div class="shop">${l.shop}</div>
+        <span class="status-pill ${s.cls}">${s.txt}</span>
+      </div>
+      <div class="card-actions" onclick="event.stopPropagation()">
+        <div class="inline-actions">
+          <button class="mini" title="Duplicate" onclick="duplicate(${i})"><i class="bi bi-copy"></i></button>
+          <button class="mini danger" title="Delete" onclick="askDelete(${i})"><i class="bi bi-trash3"></i></button>
+        </div>
+        <div class="ovf">
+          <button class="mini" title="More" onclick="toggleOvf(this)"><i class="bi bi-three-dots-vertical"></i></button>
+          <div class="ovf-menu">
+            <button class="ovf-item" onclick="duplicate(${i});closeOvf()"><i class="bi bi-copy"></i> Duplicate</button>
+            <button class="ovf-item danger" onclick="askDelete(${i});closeOvf()"><i class="bi bi-trash3"></i> Delete</button>
+          </div>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+  injectIcons(list);
+}
+function duplicate(i){
+  const c={...loads[i],name:loads[i].name+" (copy)",status:"draft"};
+  loads.splice(i+1,0,c); renderFilters(); renderHome();
+}
+function askDelete(i){
+  pendingDelete=i;
+  document.getElementById('delName').textContent = `"${loads[i].name}" will be removed.`;
+  delModal.show();
+}
+document.getElementById('delConfirm').onclick=()=>{
+  if(pendingDelete!==null){loads.splice(pendingDelete,1);pendingDelete=null;renderFilters();renderHome();}
+  delModal.hide();
+};
+
+/* ---------- render items ---------- */
+function draftRow(it,idx){
+  return `<div class="item-row">
+    <span class="iname">${it.n}</span>
+    <div class="stepper">
+      <button class="step-btn" onclick="bump(${idx},-1)">−</button>
+      <input class="qty" id="q${idx}" value="${it.q}" onchange="setQ(${idx},this.value)">
+      <button class="step-btn" onclick="bump(${idx},1)">+</button>
+    </div>
+    <div class="item-tools">
+      <div class="inline-actions">
+        <button class="mini" title="Take photo"><i class="bi bi-camera"></i></button>
+        <button class="mini" title="View / attach" onclick="go('gallery')"><i class="bi bi-images"></i></button>
+        <button class="mini danger" title="Remove"><i class="bi bi-trash3"></i></button>
+      </div>
+      <div class="ovf">
+        <button class="mini" title="More" onclick="toggleOvf(this)"><i class="bi bi-three-dots-vertical"></i></button>
+        <div class="ovf-menu">
+          <button class="ovf-item"><i class="bi bi-camera"></i> Take photo</button>
+          <button class="ovf-item" onclick="go('gallery');closeOvf()"><i class="bi bi-images"></i> View / attach</button>
+          <button class="ovf-item danger"><i class="bi bi-trash3"></i> Remove</button>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+function sentRow(it){
+  return `<div class="item-row">
+    <span class="iname">${it.n}</span>
+    <span class="thumb"><i class="bi bi-image"></i></span>
+    <span class="qty d-inline-flex align-items-center justify-content-center bg-light">${it.q}</span>
+  </div>`;
+}
+function recvRow(it,idx){
+  return `<div class="recv-row">
+    <span class="fw-semibold">${it.n}</span>
+    <span class="sent-badge" title="View gallery" onclick="go('gallery')">${idx+1}</span>
+    <span class="text-muted">—</span>
+    <div class="stepper"><input class="qty" value="${it.q}"><button class="step-btn">+</button></div>
+  </div>`;
+}
+function renderItems(){
+  document.getElementById('draftItems').innerHTML = items.map(draftRow).join('');
+  document.getElementById('sentItems').innerHTML = items.map(sentRow).join('');
+  document.getElementById('recvItems').innerHTML = items.map(recvRow).join('');
+  injectIcons();
+  recalc();
+}
+function bump(i,d){items[i].q=Math.max(0,items[i].q+d);document.getElementById('q'+i).value=items[i].q;recalc();}
+function setQ(i,v){items[i].q=Math.max(0,parseInt(v)||0);recalc();}
+function recalc(){
+  const t=items.reduce((a,b)=>a+b.q,0);
+  document.getElementById('draftTotal').textContent=t;
+  document.getElementById('recvTotal').textContent=t;
+}
+
+/* ---------- overflow menu ---------- */
+function toggleOvf(btn){
+  const ovf=btn.closest('.ovf');
+  const wasOpen=ovf.classList.contains('open');
+  closeOvf();
+  if(!wasOpen) ovf.classList.add('open');
+}
+function closeOvf(){ document.querySelectorAll('.ovf.open').forEach(o=>o.classList.remove('open')); }
+document.addEventListener('click',e=>{ if(!e.target.closest('.ovf')) closeOvf(); });
+
+/* ---------- gallery ---------- */
+function renderGallery(){
+  const g=document.getElementById('galleryGrid');
+  g.innerHTML=Array.from({length:6},(_,i)=>
+    `<div class="photo"><i class="bi bi-image"></i><span>${i+1}</span></div>`).join('');
+  injectIcons(g);
+}
+
+/* ---------- navigation ---------- */
+function go(name){
+  closeOvf();
+  if(name==='gallery') renderGallery();
+  document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+  document.getElementById('s-'+name).classList.add('active');
+  document.querySelectorAll('#protoNav button').forEach(b=>b.classList.toggle('active',b.dataset.s===name));
+  window.scrollTo({top:0,behavior:'instant'});
+}
+document.querySelectorAll('#protoNav button').forEach(b=>b.onclick=()=>go(b.dataset.s));
+
+renderFilters(); renderHome(); renderItems();
+</script>
+</body>
+</html>

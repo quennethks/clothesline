@@ -1,0 +1,13 @@
+# The image builds its own .venv from uv.lock. A host-built one is worse than
+# useless here: it hard-codes the developer's absolute paths and interpreter,
+# and it would land in /app ahead of the one uv sync creates.
+.venv
+**/.venv
+
+__pycache__/
+**/__pycache__/
+*.pyc
+
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/

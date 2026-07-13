@@ -1,0 +1,133 @@
+name: CI
+
+on:
+  push:
+    branches: [main, mvp]
+  pull_request:
+
+# The gate runs in the order of spec §10.4: lint/typecheck → pytest → Vitest →
+# build containers → Playwright. The cheap checks fan out in parallel; the
+# container build gates on them, and the e2e run — the slowest, and the one that
+# needs the whole graph up — gates on the build.
+
+jobs:
+  backend:
+    name: lint, typecheck & pytest
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+        with:
+          python-version: "3.12"
+      - run: uv sync --all-packages
+      - run: uv run ruff check .
+      - run: uv run mypy .
+      - run: uv run pytest
+
+  frontend:
+    name: lint, typecheck, vitest & build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/frontend/clothesline-web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "lts/*"
+          cache: "npm"
+          cache-dependency-path: src/frontend/clothesline-web/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run test
+      - run: npm run build
+
+  apphost-build:
+    name: build the Aspire AppHost
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: aspire/Clothesline.AppHost
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - run: dotnet build apphost.cs
+
+  containers:
+    name: build containers
+    runs-on: ubuntu-latest
+    needs: [backend, frontend]
+    steps:
+      - uses: actions/checkout@v4
+      # The images that actually ship (spec §11.5) — built here so a broken
+      # Dockerfile fails the gate instead of the deploy.
+      - name: build the API image
+        run: docker build -f src/backend/clothesline_api/Dockerfile -t clothesline-api:ci src/backend
+      - name: build the web image
+        run: docker build -f src/frontend/clothesline-web/Dockerfile -t clothesline-web:ci src/frontend/clothesline-web
+
+  e2e:
+    name: playwright e2e (against the Aspire graph)
+    runs-on: ubuntu-latest
+    needs: [containers, apphost-build]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "lts/*"
+      - uses: astral-sh/setup-uv@v4
+        with:
+          python-version: "3.12"
+
+      - name: install the Aspire CLI
+        run: dotnet tool install -g Aspire.Cli
+
+      - run: uv sync --all-packages
+        working-directory: src/backend
+      - run: npm ci
+        working-directory: src/frontend/clothesline-web
+      - run: npm ci
+        working-directory: src/frontend/clothesline-e2e
+
+      - name: install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+        working-directory: src/frontend/clothesline-e2e
+
+      # `aspire run` boots the whole topology the suite drives: web, API,
+      # Postgres, Azurite, Zitadel core + Login V2, Mailpit (spec §10.3). It
+      # also runs the alembic migration as its own gated resource, so the
+      # schema is in place before the API starts.
+      - name: start the Aspire graph
+        working-directory: aspire/Clothesline.AppHost
+        run: |
+          nohup aspire run --non-interactive > /tmp/aspire.log 2>&1 &
+          echo "waiting for the graph to come up…"
+          timeout 900 bash -c '
+            until curl -sk --max-time 2 https://localhost:8000/health | grep -q "\"db\":\"ok\"" \
+               && curl -s --max-time 2 -o /dev/null -w "%{http_code}" http://localhost:5173/ | grep -q 200; do
+              sleep 5
+            done'
+
+      - name: run the e2e suite
+        run: npm test
+        working-directory: src/frontend/clothesline-e2e
+
+      - name: aspire logs (on failure)
+        if: failure()
+        run: cat /tmp/aspire.log
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: src/frontend/clothesline-e2e/playwright-report/
+          retention-days: 7

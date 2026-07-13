@@ -1,0 +1,59 @@
+# Fronts Zitadel core and Login V2 under a single origin, since Zitadel
+# expects both to share one origin (same-origin session cookies + relative
+# Login V2 redirects) — see specs/01-mvp/technical-implementation-spec.md
+# §5.6 for the production equivalent (App Gateway/Front Door path routing).
+#
+# {$VAR} placeholders are substituted from the container's environment by
+# Caddy's own Caddyfile adapter at load time (apphost.cs sets them).
+:{$LISTEN_PORT} {
+	handle /ui/v2/login/* {
+		reverse_proxy {$LOGIN_V2_UPSTREAM} {
+			# Login V2 doesn't derive its own public host / the instance's
+			# host from Host or X-Forwarded-Host — it expects these two
+			# explicit headers from whatever reverse proxy fronts it,
+			# otherwise it falls back to a "localhost" default that Zitadel
+			# then rejects as an untrusted domain. Same value for both here
+			# since Login V2 and Zitadel core share one origin in this setup.
+			header_up x-zitadel-public-host {$ZITADEL_HOST_HEADER}
+			header_up x-zitadel-instance-host {$ZITADEL_HOST_HEADER}
+			# Host belongs to whatever is routing in front of the upstream: in
+			# Azure that is Container Apps' ingress, which resolves the target
+			# app by Host and 404s anything else. Locally it is the browser-
+			# facing host, exactly as before. The AppHost supplies whichever.
+			header_up Host {$LOGIN_V2_UPSTREAM_HOST}
+		}
+	}
+
+	# Everything else goes to Zitadel core. Its instance-by-domain resolution
+	# requires the Host header to match ExternalDomain exactly, regardless of
+	# what host the caller (browser or Login V2's own backend) actually used
+	# to reach this proxy — so it's forced here rather than passed through.
+	handle {
+		reverse_proxy {$ZITADEL_UPSTREAM} {
+			# Host is the *upstream's* host, not the instance's — see the
+			# Login V2 route above. Locally the two are the same value, so
+			# this is unchanged there; in Azure this is what makes the request
+			# reach Zitadel at all, and the header below is what tells Zitadel
+			# which instance it is for (ZITADEL_HTTP1HOSTHEADER in apphost.cs).
+			header_up Host {$ZITADEL_UPSTREAM_HOST}
+			header_up x-zitadel-forward-host {$ZITADEL_HOST_HEADER}
+			# Caddy auto-sets X-Forwarded-Host to the *original* client Host
+			# (e.g. "localhost:8080" or a container-network hostname) even
+			# though header_up Host above overrides the real Host header —
+			# Zitadel prefers X-Forwarded-Host when present, so it has to be
+			# overridden too or instance resolution still mismatches.
+			header_up X-Forwarded-Host {$ZITADEL_HOST_HEADER}
+			# Forced to the *external* scheme rather than passed through.
+			# Zitadel derives both the issuer it stamps on tokens and the
+			# instance it resolves per request from this header. Passing it
+			# through meant browser traffic (arriving via GitHub's
+			# TLS-terminating edge, which sets it to https) got an https
+			# issuer, while server-side callers inside the codespace — e.g.
+			# the API fetching /oidc/v1/userinfo over plain http on
+			# localhost:8080 — sent no such header and were told "access token
+			# invalid", because the token's https issuer no longer matched the
+			# resolved instance. Forcing it makes every caller agree.
+			header_up X-Forwarded-Proto {$ZITADEL_FORWARDED_PROTO}
+		}
+	}
+}

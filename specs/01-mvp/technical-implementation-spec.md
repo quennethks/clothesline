@@ -25,7 +25,7 @@ Identity is **not** built in-house: it is delegated to a self-hosted **Zitadel**
 | Persistence code | Shared **`clothesline_db`** package (ORM models + migrations), imported by the API |
 | Photo storage | Azure Blob Storage (Azurite locally) |
 | Frontend | React + Vite, TypeScript, PWA (service worker + IndexedDB) |
-| Identity / auth | Self-hosted **Zitadel** (OIDC), passwordless email OTP via **Login V2**; API validates JWTs against Zitadel's JWKS |
+| Identity / auth | Self-hosted **Zitadel** (OIDC), sign-in via **Login V2** (email + password — see §5.5, the passwordless plan didn't survive contact with Zitadel); API validates JWTs against Zitadel's JWKS |
 | Backend tests | pytest |
 | Frontend unit tests | Vitest |
 | E2E tests | Playwright |
@@ -39,7 +39,11 @@ The system is described from two viewpoints: how it runs **locally** under a sin
 
 ### 2.1 Local architecture (`aspire run`)
 
-Locally, the Aspire AppHost boots the whole graph as containers/processes with one command and a single dashboard. There is **no TLS termination or reverse-proxy hop** in dev — Zitadel runs in plain-HTTP mode (`ExternalSecure=false`), and one Postgres server hosts two databases (app + zitadel) for simplicity. Outbound email (Zitadel's OTP codes) is captured by **Mailpit** so nothing is actually sent.
+Locally, the Aspire AppHost boots the whole graph as containers/processes with one command and a single dashboard. One Postgres server hosts two databases (app + zitadel) for simplicity, and outbound email (Zitadel's OTP codes) is captured by **Mailpit** so nothing is actually sent.
+
+Zitadel core and its **Login V2** UI do sit behind a small local reverse proxy (`identity-proxy`, Caddy) — this mirrors the production single-origin requirement (§5.6(a)) rather than being dev-only scaffolding: Login V2's redirects are same-origin-relative and its backend calls back to Zitadel core need a `Host` header that matches Zitadel's configured domain, neither of which holds if the two are reachable on two bare ports with nothing unifying them. `identity-proxy` is the only one of the two host-exposed on a fixed port; Zitadel core and Login V2 are reachable only via the container network. See [`fixes/2026-07-05-codespaces-oidc-signin.md`](./fixes/2026-07-05-codespaces-oidc-signin.md) for the full diagnostic story.
+
+Under **GitHub Codespaces**, `apphost.cs` also auto-detects the Codespaces forwarded-URL pattern (from GitHub's own injected env vars — no setup required) and derives the OIDC issuer, Zitadel's `ExternalDomain`/`ExternalSecure`/`ExternalPort`, redirect URIs, and CORS origin from it; outside Codespaces these all fall back to plain `localhost`.
 
 ```mermaid
 flowchart TB
@@ -49,18 +53,21 @@ flowchart TB
         web["web<br/>Vite dev server"]
         api["api<br/>Uvicorn --reload"]
         mig["clothesline_db migration<br/>alembic upgrade (run once at startup)"]
-        zitadel["Zitadel core<br/>plain HTTP, ExternalSecure=false"]
-        loginv2["Zitadel Login V2<br/>:3000, /ui/v2/login"]
+        proxy["identity-proxy<br/>Caddy · single origin<br/>only identity port host-exposed"]
+        zitadel["Zitadel core<br/>ExternalSecure = isCodespaces<br/>container-network only"]
+        loginv2["Zitadel Login V2<br/>/ui/v2/login · container-network only"]
         pg[("PostgreSQL<br/>2 databases: app + zitadel")]
         azurite[("Azurite<br/>Blob emulator")]
         mailpit["Mailpit<br/>OTP email sink"]
     end
 
     dev -->|app UI| web
-    dev -->|OIDC login| loginv2
-    loginv2 -->|Session API| zitadel
+    dev -->|OIDC login| proxy
+    proxy -->|"/ui/v2/login/*"| loginv2
+    proxy -->|everything else| zitadel
+    loginv2 -->|Session API, via proxy| proxy
     web -->|HTTP/JSON · sync| api
-    api -->|validate JWT via JWKS| zitadel
+    api -->|validate JWT via JWKS, via proxy| proxy
     api --> pg
     api --> azurite
     mig --> pg
@@ -128,7 +135,7 @@ The **Aspire AppHost** is the single source of truth for the topology. It:
 - Declares every app container (web, api), the identity containers (Zitadel core, Login V2), the run-once `clothesline_db` migration, and the backing resources (two Postgres databases/servers, Blob/Azurite, Mailpit locally).
 - Wires **connection strings, the OIDC issuer/JWKS URL, and service discovery** into each container via environment variables — no hand-maintained config duplication.
 - Runs the whole graph locally with one command (`aspire run`), giving a dashboard with logs, traces, and metrics across services.
-- Feeds `azd` (Azure Developer CLI) to **provision + deploy** to Azure Container Apps. The two-environment split maps to **two deploy targets** (§11.1).
+- Drives **provisioning + deployment** to Azure Container Apps through the **Aspire CLI's own pipeline** (`aspire deploy`; `aspire publish` emits the artifacts, `aspire destroy` tears down). The two-environment split maps to **two deploy targets** (§11.1). `azd` is not used.
 
 Aspire is polyglot here: the AppHost is .NET, but the orchestrated resources are the **Python FastAPI** service, the **Vite/React** app, and the prebuilt **Zitadel** images. See `CLAUDE.md` for how this sits at the repo root.
 
@@ -143,7 +150,7 @@ Aspire is polyglot here: the AppHost is .NET, but the orchestrated resources are
 ├── CLAUDE.md                  agent/dev guide (Aspire, dev container, structure)
 ├── .devcontainer/             dev container definition
 ├── aspire/
-│   └── Clothesline.AppHost/   Aspire AppHost project (topology + azd target)
+│   └── Clothesline.AppHost/   Aspire AppHost project (topology + deployment pipeline)
 ├── specs/
 │   └── 01-mvp/                this spec + implementation plan
 └── src/
@@ -347,6 +354,8 @@ The backend is **local-first**, so the surface is small: an **RxDB replication c
 ```
 Per row the server: loads the current doc; if it differs from `assumed_master_state` → **conflict** (return current master, don't apply); else applies the write, **sets `updated_at` = server now**, maps `_deleted → deleted_at`, and runs the **per-collection validator** (ownership + invariants). Invariant violations are returned **as conflicts** (authoritative doc back) so an illegal local write is reverted on the next merge.
 
+> **"Differs" means the replicated content differs** — `id`, the collection's own columns, and `_deleted`. It **excludes `created_at`/`updated_at`**, which are server-authored (§7.3). RxDB never re-pulls between writes: after a successful push it records *the document it sent* as the assumed master state, so `assumed_master_state` always carries the **client's** timestamps. Comparing whole documents would therefore make the **second write to every document** a false conflict, and the default conflict handler (master wins) would silently revert the local change.
+
 > The live **pull-stream (SSE)** is **deferred to Phase 3**; MVP uses pull-on-reconnect + interval polling (§7).
 
 **Media** (photo bytes never travel through `/sync`)
@@ -389,12 +398,16 @@ Because these are local writes, the whole send→receive→reconcile flow runs o
 
 Identity is delegated entirely to a **self-hosted Zitadel** OIDC server. Our code never stores credentials or issues tokens; it only validates them and keeps the minimal user mirror (§4.1).
 
-- **Passwordless, no signup (PRD §4.1).** The user enters only their email. Zitadel (via **Login V2**) creates the account **just-in-time** if it doesn't exist and sends a **one-time email code / magic link** as the *primary* factor; on verification Zitadel issues OIDC tokens. No password is ever set, and there is no separate signup step — exactly the counter-friendly, zero-setup flow the PRD requires.
-- **Login flow.** The SPA uses **OIDC Authorization Code + PKCE**, redirecting to Zitadel **Login V2** for the email-code exchange, then returning with id/access/refresh tokens. Building on Login V2 (rather than a hand-rolled screen) keeps the security-critical login UI in Zitadel's vetted, maintained component.
+- **Sign-in — email + password (interim).** The user registers through **Login V2** (email, name, password) and signs in with email + password thereafter.
+
+  > ⚠️ **This is a deliberate departure from the PRD's passwordless premise, forced by Zitadel.** The original design here called for **email-only sign-in with a one-time code as the *primary* factor**. Login V2 does not offer that: its registration screen exposes exactly two primary factors, **Passkey** or **Password**. Zitadel supports email OTP only as a *second* factor, so "enter your email, get a code, you're in" is not buildable on Zitadel as it stands. Discovered in M8 when the e2e suite first drove the real login UI.
+  >
+  > **Password is the agreed interim.** The passwordless option that *is* available is **Passkey** (WebAuthn) — biometric on a phone, no shared secret — which would preserve the PRD's no-password property and is the natural candidate if we revisit this. Tracked as an open decision; PRD §4.1's "no password" claim does not currently hold.
+- **Login flow.** The SPA uses **OIDC Authorization Code + PKCE**, redirecting to Zitadel **Login V2** to authenticate, then returning with id/access/refresh tokens. Building on Login V2 (rather than a hand-rolled screen) keeps the security-critical login UI in Zitadel's vetted, maintained component.
 - **API validation.** The API validates the bearer **access token against Zitadel's JWKS** (issuer + audience checks) on every request. No introspection round-trip on the hot path.
 - **Local user mirror.** On the first authenticated request, the API upserts `User {id, sub, email}` from the token claims; `email` is refreshed on subsequent logins so it can't drift. This is the only PII we persist.
 - **Offline.** Tokens are persisted client-side (IndexedDB) so an installed PWA stays authenticated through offline sessions (PRD §4.1: zero re-auth friction); access tokens are short-lived and refreshed on reconnect. Tradeoff noted in §9.
-- **Local dev.** Zitadel core + Login V2 run as containers under Aspire (plain HTTP); OTP emails are captured by **Mailpit** (§10.3), so passwordless sign-in is fully exercisable offline of any real mail provider.
+- **Local dev.** Zitadel core + Login V2 run as containers under Aspire, behind a local single-origin reverse proxy (`identity-proxy`, §2.1); any mail Zitadel sends (verification, recovery) is captured by **Mailpit** (§10.3), so sign-in is fully exercisable offline of any real mail provider.
 
 ### 5.6 Zitadel self-hosting requirements on Azure Container Apps
 
@@ -403,8 +416,12 @@ Self-hosting Zitadel on ACA has two non-obvious requirements. They are documente
 **(a) Login V2 needs its own Container App (+ single-origin routing).**
 Since Zitadel v4, the login UI is **Login V2**, a standalone **Next.js application shipped as its own image** (`ghcr.io/zitadel/zitadel-login`) that listens on **port 3000** under the path **`/ui/v2/login`**. It is **not part of the default Zitadel core container** — it talks to the core over the API as a machine user (`login-client`, role `IAM_LOGIN_CLIENT`) using a PAT the core generates, and is enabled with `ZITADEL_DEFAULTINSTANCE_FEATURES_LOGINV2_REQUIRED=true`. Therefore self-hosting requires **provisioning a second Container App** for Login V2 alongside the core.
 
-Zitadel expects the core and the login app to be served under a **single origin with path-based routing** (`/ui/v2/login` → Login V2, everything else → Zitadel core) so the OIDC flow and session cookies stay same-origin. Because **ACA gives each Container App its own FQDN and does not path-route across apps**, the identity environment adds a **path-routing layer — Azure Application Gateway or Azure Front Door** — that presents one identity domain and splits traffic between the two backends.
+Zitadel expects the core and the login app to be served under a **single origin with path-based routing** (`/ui/v2/login` → Login V2, everything else → Zitadel core) so the OIDC flow and session cookies stay same-origin. Because **ACA gives each Container App its own FQDN and does not path-route across apps**, the identity environment needs a path-routing layer in front of the two backends.
+
+> **Decision (changed):** we do this with the **`identity-proxy` Caddy container** — the same one the local graph runs — published as the identity environment's public ingress, with Zitadel core and Login V2 internal-only behind it. ACA can't path-route *across* apps, but a proxy running *inside* it can. This keeps the routing, the header rewriting (`X-Forwarded-Host`, `x-zitadel-*`) and the single-origin session behaviour identical in dev and production, all of it already exercised by the e2e suite — and it drops App Gateway/Front Door from the bill entirely. Azure Application Gateway / Front Door remain the fallback if a WAF or multi-region routing is ever needed.
 Sources: [ZITADEL — Login App](https://zitadel.com/docs/guides/integrate/login-ui/login-app) · [ZITADEL — Connect self-hosted Login UI (login-client)](https://zitadel.com/docs/self-hosting/manage/login-client) · [ACA — transport protocols](https://learn.microsoft.com/azure/container-apps/connect-apps#transport-protocols) · [ACA — ingress settings](https://learn.microsoft.com/azure/container-apps/ingress-how-to#ingress-settings)
+
+This single-origin requirement isn't ACA-specific — local dev now mirrors it too (§2.1's `identity-proxy`), after discovering the hard way that Login V2's relative redirects and its backend calls back to Zitadel core both break without it. See [`fixes/2026-07-05-codespaces-oidc-signin.md`](./fixes/2026-07-05-codespaces-oidc-signin.md) for the two extra header-rewriting subtleties (`X-Forwarded-Host`, `x-zitadel-public-host`/`x-zitadel-instance-host`) that App Gateway/Front Door will also need to get right at deploy time.
 
 **(b) TLS termination + HTTP/2 (h2c) for gRPC.**
 ACA terminates TLS at ingress, so Zitadel runs in **external-TLS mode**: `ExternalSecure=true`, `TLS_ENABLED=false`, `ExternalPort=443`, `ExternalDomain=<identity custom domain>`. Zitadel serves its management/admin APIs and console over **gRPC (HTTP/2)** and expects the proxy to forward **h2c (cleartext HTTP/2)**, so the ACA ingress **`transport` must be set to `http2`** (the default `auto` is not sufficient for gRPC end-to-end). Additional requirements:
@@ -476,7 +493,7 @@ Clothesline is a **web app**, so it must be usable on large screens as well as p
 
 1. **Client-generated UUIDs** for every synced collection eliminate create-time id collisions — an offline create (including auto-created items and photo links) is a first-class record, not a temp placeholder.
 2. **Checkpoint** = `{ id, updated_at }`. Pull returns docs written strictly after the checkpoint, ordered by `(updated_at ASC, id ASC)` — `id` is the tiebreaker when timestamps collide.
-3. **Server-authored `updated_at`** — the server sets `updated_at` on **every** write (DB `now()`/trigger) and serializes it as an **ISO 8601 UTC string** on the wire (§4); the client's value is never trusted for ordering. Ordering runs on the real `timestamptz` column, so checkpoint iteration is correct regardless of string formatting.
+3. **Server-authored `updated_at`** — the server sets `updated_at` on **every** write (DB `now()`/trigger) and serializes it as an **ISO 8601 UTC string** on the wire (§4); the client's value is never trusted for ordering. Ordering runs on the real `timestamptz` column, so checkpoint iteration is correct regardless of string formatting. The corollary is that a pushed doc does **not** round-trip byte-for-byte, so `created_at`/`updated_at` are excluded from push-time conflict detection (§5.2).
 4. **Soft-delete / tombstones** — deletes set `deleted_at`, surfaced on the wire as `_deleted = true` (RxDB `deletedField`), so deletions replicate instead of vanishing. Nothing is hard-deleted.
 5. **Push & conflicts** — push sends `{ new_document_state, assumed_master_state }` rows; the server returns **conflicts only** (the current master doc) when its stored state differs from `assumed_master_state`. RxDB resolves conflicts on the client; for a **single-user** MVP (PRD §5: multi-user out of scope) the default **server-wins / last-write** handler is sufficient — real conflicts are limited to the same user on two devices.
 6. **Invariants at push-time** — business rules (freeze `total_sent` at send, read-only sent manifest, user ownership) are enforced by the per-collection validator; a rejected write is returned **as a conflict**, reverting the illegal local change on the next merge.
@@ -535,7 +552,7 @@ Aspire runs **Azurite** (Blob emulator), so the whole capture → upload → cac
 - **Identity is offloaded to Zitadel.** The security-critical login flow (credential handling, code generation/expiry, session management) lives in Zitadel + Login V2, not our code. Our API only **validates JWTs against Zitadel's JWKS** and scopes every query to the authenticated user.
 - **Minimal PII.** The application DB stores **only `email`** as PII (plus the opaque `sub`); all other identity data stays in Zitadel's own database (Postgres Flexible Server #1).
 - All ingress over HTTPS (ACA-managed certs); Zitadel runs in external-TLS mode with `http2` ingress (§5.6b).
-- **Secrets** — Zitadel masterkey, the `login-client` PAT, JWKS/issuer config, and DB/Blob connection strings — come from **Azure Key Vault**, injected by Aspire/azd; never committed. Locally they come from Aspire/dev-container config.
+- **Secrets** — Zitadel masterkey, the `login-client` PAT, the OIDC `client_id`, JWKS/issuer config, and DB/Blob connection strings — come from **Azure Key Vault**, injected by Aspire; never committed. Locally they come from Aspire/dev-container config.
 - **Token-at-rest tradeoff:** to honor "zero re-auth friction" offline, Zitadel tokens are persisted client-side. Access tokens are short-lived and refreshed; the refresh token is the sensitive item. Accepted for a single-user consumer MVP; flagged for revisit if the threat model changes.
 - Photos are private (SAS-gated), not public URLs.
 
@@ -554,7 +571,7 @@ Aspire runs **Azurite** (Blob emulator), so the whole capture → upload → cac
 
 ### 10.3 E2E (`clothesline-e2e`, Playwright)
 - Full flows against the running Aspire graph, which includes the **real Zitadel core + Login V2** containers:
-  - Passwordless sign-in (email → OTP read from the **Mailpit** sink → authenticated).
+  - Sign-in through the real Login V2 (register → email + password → authenticated); requests are scoped to that user.
   - Create → itemize → send → receive **match** (fast close).
   - Create → send → receive **mismatch** → category check-off → close.
   - Duplicate a load → verify only categories carry over, counts/photos/shop reset.
@@ -571,7 +588,7 @@ Lint + typecheck (ruff/mypy backend, eslint/tsc frontend) → backend pytest →
 
 ### 11.1 Flow & environments
 - **Local**: `aspire run` boots the entire graph (§2.1) — web, api, migration, Zitadel core + Login V2, Postgres, Azurite, Mailpit — with one dashboard.
-- **Cloud**: the topology is provisioned as **two ACA environments** (Identity, Application — §2.2), which maps to **two `azd`/deploy targets**. `azd` reads the Aspire model, provisions each environment + its backing resources, builds Dockerfiles, pushes to **Azure Container Registry**, and deploys the revisions. Prebuilt Zitadel images are pulled directly.
+- **Cloud**: the topology is provisioned as **two ACA environments** (Identity, Application — §2.2). **`aspire deploy`** reads the Aspire model, provisions each environment + its backing resources, builds the Dockerfiles, pushes to **Azure Container Registry**, and deploys the revisions. (`aspire publish` emits the artifacts without touching a subscription; `aspire destroy` tears down.) **`azd` is not used** — the Aspire CLI has its own deployment pipeline, and deployment work belongs in the AppHost rather than in CI YAML. Prebuilt Zitadel images are extended with a tiny Dockerfile so their config is baked in (ACA cannot bind-mount from a host).
 - Config (connection strings, OIDC issuer/JWKS URL, secrets) flows from Aspire resource wiring → ACA env vars / Key Vault references. No manual per-environment config drift.
 
 ### 11.2 Database migrations (CI/CD, not a standing resource)
@@ -598,7 +615,8 @@ If two environments prove more cost than the MVP justifies, Zitadel core + Login
 ## 12. Local development
 
 - Open the repo in the **Dev Container** (`.devcontainer/`) — provides Python 3.12 + `uv`, Node.js, the .NET SDK + Aspire workload, and Docker access.
-- One command (`aspire run`) starts the full graph — including Zitadel core + Login V2 and Mailpit — so passwordless sign-in works end-to-end with no cloud dependencies; the PWA hot-reloads via Vite, the API via Uvicorn `--reload`.
+- One command (`aspire run`) starts the full graph — including Zitadel core + Login V2 behind the local `identity-proxy` (§2.1), and Mailpit — so sign-in works end-to-end with no cloud dependencies; the PWA hot-reloads via Vite, the API via Uvicorn `--reload`.
+- **Running in a GitHub Codespace:** `apphost.cs` auto-detects it and rewrites the OIDC issuer/redirect URIs to the Codespaces forwarded-URL pattern (§2.1) — no manual config needed. The one manual step: set `identity-proxy`'s forwarded port to **Public** visibility in the Ports panel (it serves unauthenticated first-time sign-in requests, so a background browser fetch to a Private port gets blocked at GitHub's edge). See [`fixes/2026-07-05-codespaces-oidc-signin.md`](./fixes/2026-07-05-codespaces-oidc-signin.md) if sign-in ever breaks again.
 - See `CLAUDE.md` at the repo root for the authoritative dev/orchestration notes.
 
 ---
@@ -607,7 +625,7 @@ If two environments prove more cost than the MVP justifies, Zitadel core + Login
 
 | PRD § | Feature | Where implemented |
 |---|---|---|
-| 4.1 | Passwordless email auth | **Zitadel** (Login V2, email-OTP, JIT user); API validates JWTs via JWKS; Mailpit locally (§5.5–5.6) |
+| 4.1 | Email auth | **Zitadel** (Login V2, email + password — **not** the OTP the PRD asked for, see §5.5); API validates JWTs via JWKS; Mailpit locally (§5.5–5.6) |
 | 4.2 | Create a load | local `loads` doc (`name` defaults to date, optional shop fields) + pre-seeded categories; syncs via `/sync/loads` (§4.1, §5.3, §6.2) |
 | 4.3 | Itemize + custom categories | pre-seeded template + custom free-text `load_item_categories`; auto/manual `count_mode` (§4.3, §4.4); tap-counter screen (§6.3) |
 | 4.4 | Duplicate load | local-only new date-named draft carrying the category set (§5.3) |
