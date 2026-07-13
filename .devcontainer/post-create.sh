@@ -26,6 +26,5 @@ sudo chown -R "$(id -u):$(id -g)" "$PW_BROWSERS_PATH"
 (cd src/frontend/clothesline-e2e && PLAYWRIGHT_BROWSERS_PATH="$PW_BROWSERS_PATH" npx playwright install --with-deps chromium)
 
 curl -fsSL 'https://azurecliprod.blob.core.windows.net/$root/deb_install.sh' | sudo bash
-curl -fsSL https://aka.ms/install-azd.sh | bash
 
 echo "==> Dev container setup complete"

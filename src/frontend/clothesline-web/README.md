@@ -1,32 +1,38 @@
-# React + TypeScript + Vite
+# clothesline-web
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+Offline-first PWA frontend for Clothesline — tracks laundry sent to and received from per-kilo laundry shops.
 
-Currently, two official plugins are available:
+## Tech stack
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- **Vite** + **React** (TypeScript)
+- **RxDB** (IndexedDB) — local system of record, syncs to the API when online
+- **react-oidc-context** — OIDC authentication against a self-hosted Zitadel instance
+- **vite-plugin-pwa** — service worker + installable PWA
 
-## React Compiler
+## Local development
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+Run everything (API, Postgres, Zitadel, Azurite, this frontend) together with:
 
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```bash
+aspire run
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+from the repo root. The Aspire dashboard shows logs, traces, and metrics for all services.
+
+To run only the frontend dev server in isolation (against an already-running Aspire graph):
+
+```bash
+npm run dev
+```
+
+## Tests
+
+```bash
+# Unit tests (Vitest)
+npm run test
+
+# Lint
+npm run lint
+```
+
+End-to-end tests live in `../clothesline-e2e`. See that package's README for how to run the Playwright suite against a full Aspire graph.

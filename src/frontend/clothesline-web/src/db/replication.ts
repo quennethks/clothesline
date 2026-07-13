@@ -83,7 +83,12 @@ export function startReplication(
 
   const states = [loads, loadItemCategories, loadItems, photos, photoLinks]
   for (const state of states) {
-    setInterval(() => state.reSync(), RESYNC_INTERVAL_MS)
+    const intervalId = setInterval(() => state.reSync(), RESYNC_INTERVAL_MS)
+    const originalCancel = state.cancel.bind(state)
+    state.cancel = () => {
+      clearInterval(intervalId)
+      return originalCancel()
+    }
   }
   return states
 }
