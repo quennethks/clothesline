@@ -22,7 +22,9 @@ def _get_url() -> str:
         return override
     raw = os.environ.get("ConnectionStrings__clothesline_db")
     if raw:
-        return adonet_to_asyncpg_url(raw)
+        # DB_SSL_MODE is supplied separately by the AppHost — Aspire's connection
+        # string carries no SSL mode, and Azure Postgres enforces TLS (spec §5.6b).
+        return adonet_to_asyncpg_url(raw, ssl_mode=os.environ.get("DB_SSL_MODE") or None)
     return "postgresql+asyncpg://postgres:postgres@localhost:5432/clothesline_db"
 
 

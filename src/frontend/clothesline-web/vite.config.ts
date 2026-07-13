@@ -56,6 +56,10 @@ export default defineConfig({
       '/media': apiProxy,
       '/auth/me': apiProxy,
       '/health': apiProxy,
+      // The app fetches its OIDC issuer/client_id from here at boot
+      // (src/runtimeConfig.ts). Without this it would hit Vite's SPA fallback
+      // and get index.html back instead of the config.
+      '/config': apiProxy,
     },
   },
   test: {

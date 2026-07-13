@@ -37,7 +37,7 @@ aspire run
 
 This opens the Aspire dashboard with logs, traces, and metrics for every service.
 
-**Running in a GitHub Codespace:** before signing in, set the forwarded **`identity-proxy`** port to **Public** visibility in the Ports panel (Ports tab → right-click the port → Port Visibility → Public). It serves unauthenticated first-time sign-in requests, and a background browser fetch to a Private port gets silently blocked at GitHub's edge — see [`specs/01-mvp/fixes/2026-07-05-codespaces-oidc-signin.md`](./specs/01-mvp/fixes/2026-07-05-codespaces-oidc-signin.md) if sign-in still fails after that.
+**Running in a GitHub Codespace:** to sign in **by hand**, set the forwarded **`identity-proxy`** port to **Public** visibility in the Ports panel (Ports tab → right-click the port → Port Visibility → Public). It serves unauthenticated first-time sign-in requests, and a background browser fetch to a Private port gets silently blocked at GitHub's edge — see [`specs/01-mvp/fixes/2026-07-05-codespaces-oidc-signin.md`](./specs/01-mvp/fixes/2026-07-05-codespaces-oidc-signin.md) if sign-in still fails after that.
 
 ### Running tests
 
@@ -53,7 +53,33 @@ cd src/frontend/clothesline-web
 npm run test
 npm run lint
 npm run typecheck
+
+# End-to-end (needs the graph running — see below)
+cd src/frontend/clothesline-e2e
+npx playwright test
 ```
+
+**Playwright in a Codespace:** the e2e suite targets `http://localhost:5173` and expects the OIDC issuer to be `http://localhost:8080`. Inside a Codespace the AppHost instead points the issuer at the forwarded `*.app.github.dev` URL, and a *public* forwarded port serves GitHub's "you are about to access a development port" interstitial — which the browser hits instead of Zitadel, so every test fails at sign-in. Run the graph with the Codespaces variables unset so everything stays on localhost:
+
+```bash
+env -u CODESPACES -u CODESPACE_NAME -u GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN aspire run
+```
+
+## Deployment
+
+Deployed as Docker containers to **Azure Container Apps**, across two ACA environments (identity vs. application), driven entirely by the Aspire CLI:
+
+```bash
+aspire publish -o ./artifacts   # render the Bicep — no subscription, no cost
+aspire deploy -e Staging        # provision + build + push + deploy
+aspire destroy -e Staging       # tear down
+```
+
+`azd` is not used. Deployment logic lives in the AppHost, not in CI YAML — see [`CLAUDE.md`](./CLAUDE.md).
+
+**[`ops/DEPLOY.md`](./ops/DEPLOY.md) is the runbook** — prerequisites, the custom-domain binding, migrations, the OIDC bootstrap, smoke checks and the known issues. Read it before your first deploy: `aspire deploy` alone does *not* run migrations or register the OIDC app, and the identity domain must be settled up front.
+
+> The deploy path has never been run against a real subscription. Treat the first one as an experiment.
 
 ## Project structure
 

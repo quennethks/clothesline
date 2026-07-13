@@ -11,8 +11,14 @@ Guidance for working in this repository.
 The **repo root uses [Aspire](https://aspire.dev) for pipeline and infrastructure management.** The Aspire **AppHost** (`aspire/Clothesline.AppHost`) is the single source of truth for the application topology: it declares every service and backing resource, wires connection strings and service discovery between them, runs the whole graph locally, and drives provisioning + deployment to the cloud.
 
 - **Run everything locally:** `aspire run` — boots the API, the web app, Postgres, the Blob emulator (Azurite), the **Zitadel** identity server (core + Login V2), and Mailpit together, with a dashboard for logs, traces, and metrics.
-- **Deploy:** the app is deployed as **Docker containers to Azure Container Apps (ACA)** across **two ACA environments** (identity vs. application), provisioned from the Aspire model via `azd up`. Do not hand-maintain per-environment config — let Aspire wire it.
+- **Deploy:** the app is deployed as **Docker containers to Azure Container Apps (ACA)** across **two ACA environments** (identity vs. application), provisioned from the Aspire model via **`aspire deploy`** (`aspire publish` for artifacts only, `aspire destroy` to tear down). Do not hand-maintain per-environment config — let Aspire wire it.
 - Secrets and connection strings come from Aspire resource wiring (Key Vault in Azure, dev-container/Aspire config locally). Never commit secrets.
+
+### Aspire owns the deployment pipeline
+
+- **Deployment work is expressed in the AppHost, not in CI YAML.** Provisioning, image build/push, database migrations, post-deploy bootstrap and teardown are all driven by the Aspire CLI (`aspire deploy` / `aspire do <step>`). The AppHost is the single source of truth for *how the app is deployed*, exactly as it already is for *what the app is made of*.
+- **GitHub Actions is a trigger, not a deployment tool.** Its job is limited to reacting to the git event, checkout, authenticating to Azure, running the quality gates (ruff, mypy, eslint, tsc, pytest, Vitest, Playwright), and invoking `aspire deploy`.
+- **Reaching for another tool requires evidence, not convenience.** Before falling back to `az`, `azd` or raw shell for a deployment concern, establish that Aspire genuinely has no model for it — check the `Aspire.Hosting.*` API surface and `aspire deploy --list-steps`, not just the docs. Any fallback must carry a comment naming the missing Aspire capability, so it stays a visible exception rather than quiet drift back to bash. (`azd` is **not** used in this repo.)
 
 ## Dev container
 
@@ -41,7 +47,7 @@ The repo ships a **dev container** (`.devcontainer/`). Do development inside it 
 /
 ├── .devcontainer/                dev container definition
 ├── aspire/
-│   └── Clothesline.AppHost/       Aspire AppHost (topology, azd target)
+│   └── Clothesline.AppHost/       Aspire AppHost (topology + deployment pipeline)
 ├── business/                      product / PRD docs
 ├── specs/                         technical specs (01-mvp = Phase 1)
 └── src/
@@ -68,5 +74,5 @@ Backend is a modular monolith (one deployable, split internally by domain: `auth
 - **Playwright:** Chromium is pre-installed at `/opt/pw-browsers/chromium`. Do **not** run `playwright install`.
 - **IDs are client-generated UUIDs** for Load/LoadItem/Photo so offline creates survive sync.
 - **Identity is Zitadel's job, not ours.** Don't build password flows, token issuance, or OTP storage — the API only validates Zitadel-issued JWTs (JWKS). Self-hosting Zitadel on ACA has specific requirements (Login V2 as its own container + path routing, `http2` ingress, external-TLS mode) — see spec §5.6 before touching deploy.
-- **DB migrations run as a CI/CD pipeline step** (`alembic upgrade head` from `clothesline_db`), not as a standing ACA job (spec §11.2).
+- **DB migrations run as a deployment pipeline step** (`alembic upgrade head` from `clothesline_db`), ordered before the API's new revision goes live — not as a standing ACA job (spec §11.2).
 - Keep product decisions in `business/`, technical decisions in `specs/`. Update the spec when the design changes.

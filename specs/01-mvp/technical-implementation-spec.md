@@ -135,7 +135,7 @@ The **Aspire AppHost** is the single source of truth for the topology. It:
 - Declares every app container (web, api), the identity containers (Zitadel core, Login V2), the run-once `clothesline_db` migration, and the backing resources (two Postgres databases/servers, Blob/Azurite, Mailpit locally).
 - Wires **connection strings, the OIDC issuer/JWKS URL, and service discovery** into each container via environment variables — no hand-maintained config duplication.
 - Runs the whole graph locally with one command (`aspire run`), giving a dashboard with logs, traces, and metrics across services.
-- Feeds `azd` (Azure Developer CLI) to **provision + deploy** to Azure Container Apps. The two-environment split maps to **two deploy targets** (§11.1).
+- Drives **provisioning + deployment** to Azure Container Apps through the **Aspire CLI's own pipeline** (`aspire deploy`; `aspire publish` emits the artifacts, `aspire destroy` tears down). The two-environment split maps to **two deploy targets** (§11.1). `azd` is not used.
 
 Aspire is polyglot here: the AppHost is .NET, but the orchestrated resources are the **Python FastAPI** service, the **Vite/React** app, and the prebuilt **Zitadel** images. See `CLAUDE.md` for how this sits at the repo root.
 
@@ -150,7 +150,7 @@ Aspire is polyglot here: the AppHost is .NET, but the orchestrated resources are
 ├── CLAUDE.md                  agent/dev guide (Aspire, dev container, structure)
 ├── .devcontainer/             dev container definition
 ├── aspire/
-│   └── Clothesline.AppHost/   Aspire AppHost project (topology + azd target)
+│   └── Clothesline.AppHost/   Aspire AppHost project (topology + deployment pipeline)
 ├── specs/
 │   └── 01-mvp/                this spec + implementation plan
 └── src/
@@ -416,7 +416,9 @@ Self-hosting Zitadel on ACA has two non-obvious requirements. They are documente
 **(a) Login V2 needs its own Container App (+ single-origin routing).**
 Since Zitadel v4, the login UI is **Login V2**, a standalone **Next.js application shipped as its own image** (`ghcr.io/zitadel/zitadel-login`) that listens on **port 3000** under the path **`/ui/v2/login`**. It is **not part of the default Zitadel core container** — it talks to the core over the API as a machine user (`login-client`, role `IAM_LOGIN_CLIENT`) using a PAT the core generates, and is enabled with `ZITADEL_DEFAULTINSTANCE_FEATURES_LOGINV2_REQUIRED=true`. Therefore self-hosting requires **provisioning a second Container App** for Login V2 alongside the core.
 
-Zitadel expects the core and the login app to be served under a **single origin with path-based routing** (`/ui/v2/login` → Login V2, everything else → Zitadel core) so the OIDC flow and session cookies stay same-origin. Because **ACA gives each Container App its own FQDN and does not path-route across apps**, the identity environment adds a **path-routing layer — Azure Application Gateway or Azure Front Door** — that presents one identity domain and splits traffic between the two backends.
+Zitadel expects the core and the login app to be served under a **single origin with path-based routing** (`/ui/v2/login` → Login V2, everything else → Zitadel core) so the OIDC flow and session cookies stay same-origin. Because **ACA gives each Container App its own FQDN and does not path-route across apps**, the identity environment needs a path-routing layer in front of the two backends.
+
+> **Decision (changed):** we do this with the **`identity-proxy` Caddy container** — the same one the local graph runs — published as the identity environment's public ingress, with Zitadel core and Login V2 internal-only behind it. ACA can't path-route *across* apps, but a proxy running *inside* it can. This keeps the routing, the header rewriting (`X-Forwarded-Host`, `x-zitadel-*`) and the single-origin session behaviour identical in dev and production, all of it already exercised by the e2e suite — and it drops App Gateway/Front Door from the bill entirely. Azure Application Gateway / Front Door remain the fallback if a WAF or multi-region routing is ever needed.
 Sources: [ZITADEL — Login App](https://zitadel.com/docs/guides/integrate/login-ui/login-app) · [ZITADEL — Connect self-hosted Login UI (login-client)](https://zitadel.com/docs/self-hosting/manage/login-client) · [ACA — transport protocols](https://learn.microsoft.com/azure/container-apps/connect-apps#transport-protocols) · [ACA — ingress settings](https://learn.microsoft.com/azure/container-apps/ingress-how-to#ingress-settings)
 
 This single-origin requirement isn't ACA-specific — local dev now mirrors it too (§2.1's `identity-proxy`), after discovering the hard way that Login V2's relative redirects and its backend calls back to Zitadel core both break without it. See [`fixes/2026-07-05-codespaces-oidc-signin.md`](./fixes/2026-07-05-codespaces-oidc-signin.md) for the two extra header-rewriting subtleties (`X-Forwarded-Host`, `x-zitadel-public-host`/`x-zitadel-instance-host`) that App Gateway/Front Door will also need to get right at deploy time.
@@ -550,7 +552,7 @@ Aspire runs **Azurite** (Blob emulator), so the whole capture → upload → cac
 - **Identity is offloaded to Zitadel.** The security-critical login flow (credential handling, code generation/expiry, session management) lives in Zitadel + Login V2, not our code. Our API only **validates JWTs against Zitadel's JWKS** and scopes every query to the authenticated user.
 - **Minimal PII.** The application DB stores **only `email`** as PII (plus the opaque `sub`); all other identity data stays in Zitadel's own database (Postgres Flexible Server #1).
 - All ingress over HTTPS (ACA-managed certs); Zitadel runs in external-TLS mode with `http2` ingress (§5.6b).
-- **Secrets** — Zitadel masterkey, the `login-client` PAT, JWKS/issuer config, and DB/Blob connection strings — come from **Azure Key Vault**, injected by Aspire/azd; never committed. Locally they come from Aspire/dev-container config.
+- **Secrets** — Zitadel masterkey, the `login-client` PAT, the OIDC `client_id`, JWKS/issuer config, and DB/Blob connection strings — come from **Azure Key Vault**, injected by Aspire; never committed. Locally they come from Aspire/dev-container config.
 - **Token-at-rest tradeoff:** to honor "zero re-auth friction" offline, Zitadel tokens are persisted client-side. Access tokens are short-lived and refreshed; the refresh token is the sensitive item. Accepted for a single-user consumer MVP; flagged for revisit if the threat model changes.
 - Photos are private (SAS-gated), not public URLs.
 
@@ -586,7 +588,7 @@ Lint + typecheck (ruff/mypy backend, eslint/tsc frontend) → backend pytest →
 
 ### 11.1 Flow & environments
 - **Local**: `aspire run` boots the entire graph (§2.1) — web, api, migration, Zitadel core + Login V2, Postgres, Azurite, Mailpit — with one dashboard.
-- **Cloud**: the topology is provisioned as **two ACA environments** (Identity, Application — §2.2), which maps to **two `azd`/deploy targets**. `azd` reads the Aspire model, provisions each environment + its backing resources, builds Dockerfiles, pushes to **Azure Container Registry**, and deploys the revisions. Prebuilt Zitadel images are pulled directly.
+- **Cloud**: the topology is provisioned as **two ACA environments** (Identity, Application — §2.2). **`aspire deploy`** reads the Aspire model, provisions each environment + its backing resources, builds the Dockerfiles, pushes to **Azure Container Registry**, and deploys the revisions. (`aspire publish` emits the artifacts without touching a subscription; `aspire destroy` tears down.) **`azd` is not used** — the Aspire CLI has its own deployment pipeline, and deployment work belongs in the AppHost rather than in CI YAML. Prebuilt Zitadel images are extended with a tiny Dockerfile so their config is baked in (ACA cannot bind-mount from a host).
 - Config (connection strings, OIDC issuer/JWKS URL, secrets) flows from Aspire resource wiring → ACA env vars / Key Vault references. No manual per-environment config drift.
 
 ### 11.2 Database migrations (CI/CD, not a standing resource)

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from 'react-oidc-context'
+import { getConfig } from '../runtimeConfig'
 
 export interface CurrentUser {
   id: string
@@ -7,7 +8,6 @@ export interface CurrentUser {
   email: string
 }
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 const CACHE_KEY = 'clothesline.current-user'
 
 // Fetches GET /auth/me to learn our server-generated User.id (spec §4.1) — the
@@ -51,7 +51,7 @@ export function useCurrentUser(): { user: CurrentUser | null; loading: boolean }
     if (cached && !cancelled) setUser(cached)
     setLoading(!cached)
 
-    fetch(`${API_BASE_URL}/auth/me`, {
+    fetch(`${getConfig().apiBaseUrl}/auth/me`, {
       headers: { Authorization: `Bearer ${accessToken}` },
     })
       .then((res) => (res.ok ? (res.json() as Promise<CurrentUser>) : Promise.reject(res)))

@@ -16,6 +16,11 @@
 			# since Login V2 and Zitadel core share one origin in this setup.
 			header_up x-zitadel-public-host {$ZITADEL_HOST_HEADER}
 			header_up x-zitadel-instance-host {$ZITADEL_HOST_HEADER}
+			# Host belongs to whatever is routing in front of the upstream: in
+			# Azure that is Container Apps' ingress, which resolves the target
+			# app by Host and 404s anything else. Locally it is the browser-
+			# facing host, exactly as before. The AppHost supplies whichever.
+			header_up Host {$LOGIN_V2_UPSTREAM_HOST}
 		}
 	}
 
@@ -25,7 +30,13 @@
 	# to reach this proxy — so it's forced here rather than passed through.
 	handle {
 		reverse_proxy {$ZITADEL_UPSTREAM} {
-			header_up Host {$ZITADEL_HOST_HEADER}
+			# Host is the *upstream's* host, not the instance's — see the
+			# Login V2 route above. Locally the two are the same value, so
+			# this is unchanged there; in Azure this is what makes the request
+			# reach Zitadel at all, and the header below is what tells Zitadel
+			# which instance it is for (ZITADEL_HTTP1HOSTHEADER in apphost.cs).
+			header_up Host {$ZITADEL_UPSTREAM_HOST}
+			header_up x-zitadel-forward-host {$ZITADEL_HOST_HEADER}
 			# Caddy auto-sets X-Forwarded-Host to the *original* client Host
 			# (e.g. "localhost:8080" or a container-network hostname) even
 			# though header_up Host above overrides the real Host header —

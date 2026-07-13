@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
+import { getConfig } from './runtimeConfig'
 
 type HealthState = 'checking' | 'ok' | 'unreachable'
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
 function HealthStatus() {
   const [state, setState] = useState<HealthState>('checking')
@@ -12,7 +12,7 @@ function HealthStatus() {
 
     async function checkHealth() {
       try {
-        const response = await fetch(`${API_BASE_URL}/health`)
+        const response = await fetch(`${getConfig().apiBaseUrl}/health`)
         if (!cancelled) setState(response.ok ? 'ok' : 'unreachable')
       } catch {
         if (!cancelled) setState('unreachable')

@@ -1,4 +1,4 @@
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
+import { getConfig } from '../runtimeConfig'
 
 export interface SyncCheckpoint {
   id: string
@@ -26,7 +26,7 @@ async function authorizedFetch(
   const token = getToken()
   const headers = new Headers(init.headers)
   if (token) headers.set('Authorization', `Bearer ${token}`)
-  return fetch(`${API_BASE_URL}${path}`, { ...init, headers })
+  return fetch(`${getConfig().apiBaseUrl}${path}`, { ...init, headers })
 }
 
 export function createPullHandler<RxDocType>(collectionName: string, getToken: () => string | undefined) {

@@ -10,6 +10,7 @@ from sqlalchemy import text
 
 from clothesline_api.auth.router import router as auth_router
 from clothesline_api.config import settings
+from clothesline_api.config_router import router as config_router
 from clothesline_api.media import blob
 from clothesline_api.media.router import router as media_router
 from clothesline_api.sync.router import router as sync_router
@@ -47,6 +48,7 @@ app.state.session_factory = async_session_factory(engine)
 app.include_router(auth_router)
 app.include_router(sync_router)
 app.include_router(media_router)
+app.include_router(config_router)
 
 
 @app.get("/health")

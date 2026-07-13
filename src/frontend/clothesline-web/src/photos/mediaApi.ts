@@ -2,7 +2,7 @@
 // the bytes themselves go straight between the device and Blob Storage over
 // the returned SAS URL, never through the API (spec §8).
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
+import { getConfig } from '../runtimeConfig'
 
 export interface UploadTarget {
   blob_key: string
@@ -18,7 +18,7 @@ interface ReadTarget {
 async function authorized(path: string, init: RequestInit, token: string | undefined) {
   const headers = new Headers(init.headers)
   if (token) headers.set('Authorization', `Bearer ${token}`)
-  const res = await fetch(`${API_BASE_URL}${path}`, { ...init, headers })
+  const res = await fetch(`${getConfig().apiBaseUrl}${path}`, { ...init, headers })
   if (!res.ok) throw new Error(`${init.method ?? 'GET'} ${path} failed: ${res.status}`)
   return res
 }
