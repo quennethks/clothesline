@@ -1,5 +1,6 @@
 # Technical Implementation Spec — Clothesline (Phase 1.05: Camera)
 
+> **Prototype:** [`camera-prototype.html`](./camera-prototype.html) — every state below, drawn. Open it straight from disk (no build, no network). Deep-link a single screen with `?state=review`, `?state=scan&device=desktop`, …
 > **Supersedes:** [`specs/01-mvp/technical-implementation-spec.md`](../01-mvp/technical-implementation-spec.md) §6.2, the *Photo capture* row — and **only** that (see §10)
 > **Companion to:** [`business/07-prd-phase1-mvp.md`](../../business/07-prd-phase1-mvp.md) §4.5 (Photos)
 > **Phase:** 1.05 — an increment on the shipped MVP, not a new phase of the product
