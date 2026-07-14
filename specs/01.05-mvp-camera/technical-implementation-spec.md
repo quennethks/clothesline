@@ -236,11 +236,15 @@ Left entirely open, because the camera surface is the same either way: **on-devi
 
 ---
 
-## 10. Amendments to the MVP spec
+## 10. Supersessions
 
-On approval, [`specs/01-mvp/technical-implementation-spec.md`](../01-mvp/technical-implementation-spec.md):
-- **§6.2**, the *Photo capture* row — currently "standard camera/file capture with preview + confirm", which overstates what was built. Replace with an in-app-camera description pointing here.
-- **§8.2 step 1** — note that bytes arrive from a live camera frame *or* a picked file, and that both are `Blob`s on the same path.
+What this spec **overrides** in [`specs/01-mvp/technical-implementation-spec.md`](../01-mvp/technical-implementation-spec.md). Per the repo convention (CLAUDE.md), the MVP spec is **not rewritten** — its original text stays and the superseded passage carries a dated callout pointing back here, so the evolution of the decision stays readable from either end.
+
+| Superseded | Overridden by | Nature of the change |
+|---|---|---|
+| MVP **§6.2**, the *Photo capture* row | **§1.2** (and §3 for the surface) | Capture was a hidden `<input capture="environment">` — the OS camera app on mobile, and on desktop a silent degradation to a file picker with no camera access at all. It is now an in-app `getUserMedia` camera on both platforms, with the OS camera app kept as a mobile-only per-shot option. The row's **preview + confirm** was specced in Phase 1 but never built; §3.1 delivers it. |
+
+**Deliberately *not* superseded:** MVP **§8** in its entirety, including §8.2 step 1. The byte path — compress → stash locally → `local_only` → upload queue → Blob — is untouched by this spec. Where the bytes came from is not something §8 ever asserted: a camera frame and a picked file are both a `Blob` by the time they reach it. Annotating it would be noise, and the value of the supersession convention depends on it marking **reversed decisions**, not every place a reader might land.
 
 ---
 
