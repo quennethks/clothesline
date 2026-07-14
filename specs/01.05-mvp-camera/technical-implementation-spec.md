@@ -67,7 +67,7 @@ So: **in-app is the default on both platforms**, and on mobile the OS camera app
 
 ### 3.1 `CameraSheet` — a full-screen modal
 
-Opened from the Gallery AppBar's camera button (today's only capture entry point, [`Gallery.tsx:96-106`](../../src/frontend/clothesline-web/src/routes/Gallery.tsx#L96-L106)). It is a full-bleed overlay on mobile and a centered, max-width dialog on desktop, reusing the `photo-lightbox` overlay pattern already in `theme.css`.
+Mounted by both capture entry points — the **Draft row** camera button and the **Gallery** AppBar camera button (§3.4) — with the same props; only the scope differs. It is a full-bleed overlay on mobile and a centered, max-width dialog on desktop, reusing the `photo-lightbox` overlay pattern already in `theme.css`.
 
 It is a **state machine**, and every terminal state is either a photo or an exit — never a dead end:
 
@@ -76,6 +76,7 @@ stateDiagram-v2
     [*] --> Requesting: sheet opens
     Requesting --> Live: stream granted
     Requesting --> Unavailable: denied / no camera / in use / insecure context
+    Unavailable --> Requesting: Try again
 
     Live --> Review: shutter (frame grabbed)
     Review --> Live: Retake
@@ -108,7 +109,7 @@ stateDiagram-v2
 |---|---|---|
 | **Shutter** | `Live` | Grabs a frame → `Review`. Disabled until the video reports a non-zero `videoWidth`. |
 | **Choose existing photo** | `Live` + `Unavailable` | Opens a file picker (`<input type="file" accept="image/*">`, **no `capture` attribute** — that is what makes it the library/file picker rather than the camera on mobile). `multiple` per §5. |
-| **Switch camera** | `Live`, when ≥2 video inputs | See §3.3. |
+| **Switch camera** | `Live`, when there is another camera to switch to | Facing-flip on touch, device `<select>` on desktop — §3.3. |
 | **Use device camera** | `Live` + `Unavailable`, **mobile only** | The existing hidden `capture="environment"` input — the OS camera app. See below. |
 | **Cancel** | all | Stops the stream, closes. |
 | **Retake / Use photo** | `Review` | Discard the frame and return to `Live`; or commit it (§4). |
@@ -201,15 +202,19 @@ A file failing a guard is **skipped, not fatal** — it flows into the same part
 
 ### 5.2 Batch size, and the limit that actually matters
 
-**200 files per selection.** After compression a photo is ~150–300KB, so 200 is roughly **30–60MB** — comfortably inside the 150MB budget in [`byteStore.ts:13`](../../src/frontend/clothesline-web/src/photos/byteStore.ts#L13) and nowhere near a browser storage limit. It is a generous cap, and deliberately so: it exists to stop an absurd gesture, not to ration ordinary use.
+**200 files per selection.** After compression a photo is ~150–300KB, so 200 is roughly **30–60MB** — inside the 100MB pending budget below, and nowhere near a browser storage limit. It is a generous cap, and deliberately so: it exists to stop an absurd gesture, not to ration ordinary use.
 
 **But a per-selection cap is not the real safeguard, and must not be mistaken for one.** Un-uploaded bytes are **never evicted** — correctly, since they are the only copy (MVP §8.3). That rule was safe when photos arrived one camera shot at a time. It is not safe against *repeated* batches: a user offline in a shop can pick 200, then 200 again, and nothing in a per-gesture cap stops the pending pile from growing without limit until IndexedDB writes start failing — **offline, which is precisely when the app is supposed to be dependable.**
 
 So the guard that matters is on the **cumulative weight of photos still waiting to upload**, not on the size of any one gesture:
 
 - Before a batch, sum the bytes of entries with `uploaded === false` ([`byteStore.ts`](../../src/frontend/clothesline-web/src/photos/byteStore.ts) already records this per entry, so it is a `getAll` + filter).
-- If that total is at or above the budget, **refuse the batch** and say why: *"You have a lot of photos waiting to upload. Connect to the internet to free up space."* Refusing to accept a photo we cannot safely keep is honest; accepting it and later failing to store it is not.
+- If that total is at or above a **new `PENDING_BUDGET_BYTES` = 100 MB**, **refuse the batch** and say why: *"You have a lot of photos waiting to upload. Connect to the internet to free up space."* Refusing to accept a photo we cannot safely keep is honest; accepting it and later failing to store it is not.
 - The camera shutter (one photo) is subject to the same check. A single photo is small, so in practice this only ever fires after the pending pile is already large.
+
+**Why a *new*, lower constant rather than the existing 150MB `CACHE_BUDGET_BYTES`.** Read [`trimCache`](../../src/frontend/clothesline-web/src/photos/byteStore.ts#L84-L96) carefully: it sums **every** entry (`entries.reduce`, including un-uploaded ones) but only ever evicts the **uploaded** ones. Pending bytes therefore *count against* the cache budget while being ineligible for eviction. So as the pending pile approaches 150MB, `trimCache` responds by evicting **every uploaded byte it has** — wiping out this device's entire offline photo cache — and still finishes over budget, because the bytes actually filling it are the ones it may not touch.
+
+Refusing at 150MB would fire only after that damage was done. **100MB leaves ~50MB of headroom** in which the uploaded cache can still exist, so the two budgets stop fighting each other. This interaction is not obvious from either constant alone, which is exactly why it is written down here.
 
 ### 5.3 Processing a batch
 
@@ -248,8 +253,10 @@ src/frontend/clothesline-web/src/photos/
 │                          that is the guard actually protecting the offline case.
 ├── capture.ts         —    unchanged (already takes a Blob)
 ├── compress.ts        EDIT one line: imageOrientation: 'from-image' (§4.1)
-├── byteStore.ts       EDIT add pendingBytes(): sum of entries with uploaded=false.
-│                          The data is already stored per entry; nothing exposes it.
+├── byteStore.ts       EDIT add pendingBytes() (sum of entries with uploaded=false —
+│                          the data is already stored per entry, nothing exposes it)
+│                          and PENDING_BUDGET_BYTES = 100MB, deliberately below the
+│                          existing 150MB CACHE_BUDGET_BYTES (§5.2 explains why).
 └── uploadQueue.ts     —    unchanged
 
 src/frontend/clothesline-web/src/routes/Gallery.tsx
@@ -275,7 +282,7 @@ No changes under `src/backend/`, `src/frontend/clothesline-web/src/db/`, or `asp
 **Vitest** (`useCamera.test.ts` — new; there is currently *no* unit coverage of the capture path at all):
 - `navigator.mediaDevices` stubbed. Assert: tracks are stopped on unmount, on cancel, and before a device switch; `NotAllowedError` / `NotFoundError` / `NotReadableError` / absent `mediaDevices` each map to the right `Unavailable` reason; enumeration happens only after a grant; a stale stored `deviceId` falls back to the default.
 - `compress.test.ts` — new: asserts `createImageBitmap` is called with `{ imageOrientation: 'from-image' }` (§4.1).
-- `guards.test.ts` — new (§5.1–5.2): an oversized file and a non-image file are rejected **without being decoded** (assert `createImageBitmap` is never called — the whole point is that the guard runs *before* the thing that OOMs); a batch over 200 is refused; `pendingBytes()` at/over budget refuses the batch, and drops back to accepting once the queue drains.
+- `guards.test.ts` — new (§5.1–5.2): an oversized file and a non-image file are rejected **without being decoded** (assert `createImageBitmap` is never called — the whole point is that the guard runs *before* the thing that OOMs); a batch over 200 is refused; `pendingBytes()` at/over `PENDING_BUDGET_BYTES` refuses the batch, and drops back to accepting once the upload queue drains. **Also assert the two budgets stay ordered** (`PENDING_BUDGET_BYTES < CACHE_BUDGET_BYTES`) — if someone later raises the pending one past the cache one, the eviction pathology in §5.2 comes straight back, silently.
 
 **Playwright** — Chromium needs the launch arg **`--use-fake-device-for-media-stream`** (a synthetic camera, so `getUserMedia` resolves headlessly with no hardware). New `camera.spec.ts`:
 
@@ -340,5 +347,5 @@ Both are cases where the convention could have been applied and shouldn't be: it
 - **Burst / stay-in-camera multi-shot** — the shutter yields one photo and closes. Worth revisiting once we see whether users photograph garments in runs.
 - **Zoom, torch, tap-to-focus** (`applyConstraints` on the track) — Chromium-mostly, and not obviously worth the surface.
 - **Re-taking or cropping an already-saved photo** — delete + re-add remains the path.
-- **On-device HEIC decode** — browsers that can't decode a picked HEIC will fail that file; the partial-failure path (§5) reports it. Ordinary phone pickers transcode to JPEG on the way out, so this should be rare.
+- **On-device HEIC decode** — browsers that can't decode a picked HEIC will fail that file; the partial-failure path (§5.3) reports it. Ordinary phone pickers transcode to JPEG on the way out, so this should be rare.
 - **Anything server-side.** Explicitly: no new endpoint, no schema change, no migration.
