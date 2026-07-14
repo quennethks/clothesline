@@ -184,7 +184,39 @@ The data model decides this for us, and it lands differently in the two scopes t
 
 The camera shutter always produces **one** photo at a time — after `Use photo` the sheet closes. (Staying in the camera for a rapid burst is a natural follow-on but is **not** in this spec.)
 
-**Processing N files:** sequentially, not `Promise.all` — each file is a decode + canvas resize + WebP encode, and running a dozen in parallel on a mid-range phone will spike memory and can be OOM-killed. The sheet shows `Adding 3 of 5…` and blocks its own controls while it runs. **Partial failure does not roll back**: files that succeed keep their photos, and the sheet reports `2 of 5 photos couldn't be added` — losing four good photos because the fifth was a corrupt HEIC would be worse than the honest partial result.
+### 5.1 Guarding the input — the bound the camera used to give us for free
+
+Every photo in the MVP came from the OS camera app, so the input was **implicitly bounded**: a normal photo, a few MB, one at a time. Opening a file picker onto the user's disk **removes that bound**, and nothing in the existing pipeline replaces it. [`compress.ts`](../../src/frontend/clothesline-web/src/photos/compress.ts) calls `createImageBitmap(file)`, which decodes the **entire** image into memory *before* the resize that was supposed to make it small — so a 200MB scan or a 60MP raw takes the tab out with it. `accept="image/*"` does not save us; it is a picker filter, not enforcement, and is trivially bypassed.
+
+So, **before any decode**, each file is checked:
+
+| Guard | Rule | Why |
+|---|---|---|
+| **Type** | `file.type` must start with `image/` | A `.zip` renamed `.jpg` should fail fast, not inside the decoder. |
+| **Size** | `file.size` ≤ **25 MB** | Generously above any phone photo (~2–8MB) and any reasonable DSLR JPEG, far below what kills a tab. |
+| **Batch** | ≤ **200 files** per selection | See §5.2. |
+
+A file failing a guard is **skipped, not fatal** — it flows into the same partial-failure report as any other bad file (below).
+
+### 5.2 Batch size, and the limit that actually matters
+
+**200 files per selection.** After compression a photo is ~150–300KB, so 200 is roughly **30–60MB** — comfortably inside the 150MB budget in [`byteStore.ts:13`](../../src/frontend/clothesline-web/src/photos/byteStore.ts#L13) and nowhere near a browser storage limit. It is a generous cap, and deliberately so: it exists to stop an absurd gesture, not to ration ordinary use.
+
+**But a per-selection cap is not the real safeguard, and must not be mistaken for one.** Un-uploaded bytes are **never evicted** — correctly, since they are the only copy (MVP §8.3). That rule was safe when photos arrived one camera shot at a time. It is not safe against *repeated* batches: a user offline in a shop can pick 200, then 200 again, and nothing in a per-gesture cap stops the pending pile from growing without limit until IndexedDB writes start failing — **offline, which is precisely when the app is supposed to be dependable.**
+
+So the guard that matters is on the **cumulative weight of photos still waiting to upload**, not on the size of any one gesture:
+
+- Before a batch, sum the bytes of entries with `uploaded === false` ([`byteStore.ts`](../../src/frontend/clothesline-web/src/photos/byteStore.ts) already records this per entry, so it is a `getAll` + filter).
+- If that total is at or above the budget, **refuse the batch** and say why: *"You have a lot of photos waiting to upload. Connect to the internet to free up space."* Refusing to accept a photo we cannot safely keep is honest; accepting it and later failing to store it is not.
+- The camera shutter (one photo) is subject to the same check. A single photo is small, so in practice this only ever fires after the pending pile is already large.
+
+### 5.3 Processing a batch
+
+**Sequentially, not `Promise.all`** — each file is a decode + canvas resize + WebP encode, and running even a dozen in parallel on a mid-range phone will spike memory. At the 200-file cap this is **60–100 seconds** of work, which cannot be a frozen screen:
+
+- Live progress (`Adding 143 of 200…`), announced via `aria-live` (§3.1).
+- A **Cancel** that stops after the in-flight file. **Everything already written is kept** — cancel means "stop adding more", not "undo".
+- **Partial failure does not roll back.** Files that succeed keep their photos; the sheet reports `2 of 5 photos couldn't be added`. Losing four good photos because the fifth was a corrupt HEIC would be worse than the honest partial result.
 
 ---
 
@@ -210,9 +242,13 @@ src/frontend/clothesline-web/src/photos/
 │                          a mocked navigator.mediaDevices.
 ├── CameraSheet.tsx    NEW  the modal: the §3.1 state machine, controls, the two
 │                          file inputs (picker + OS-camera escape hatch).
+├── guards.ts          NEW  pre-decode input guards (§5.1): file type, 25MB size
+│                          cap, 200-file batch cap — plus the pending-bytes check
+│                          that is the guard actually protecting the offline case.
 ├── capture.ts         —    unchanged (already takes a Blob)
 ├── compress.ts        EDIT one line: imageOrientation: 'from-image' (§4.1)
-├── byteStore.ts       —    unchanged
+├── byteStore.ts       EDIT add pendingBytes(): sum of entries with uploaded=false.
+│                          The data is already stored per entry; nothing exposes it.
 └── uploadQueue.ts     —    unchanged
 
 src/frontend/clothesline-web/src/routes/Gallery.tsx
@@ -238,14 +274,20 @@ No changes under `src/backend/`, `src/frontend/clothesline-web/src/db/`, or `asp
 **Vitest** (`useCamera.test.ts` — new; there is currently *no* unit coverage of the capture path at all):
 - `navigator.mediaDevices` stubbed. Assert: tracks are stopped on unmount, on cancel, and before a device switch; `NotAllowedError` / `NotFoundError` / `NotReadableError` / absent `mediaDevices` each map to the right `Unavailable` reason; enumeration happens only after a grant; a stale stored `deviceId` falls back to the default.
 - `compress.test.ts` — new: asserts `createImageBitmap` is called with `{ imageOrientation: 'from-image' }` (§4.1).
+- `guards.test.ts` — new (§5.1–5.2): an oversized file and a non-image file are rejected **without being decoded** (assert `createImageBitmap` is never called — the whole point is that the guard runs *before* the thing that OOMs); a batch over 200 is refused; `pendingBytes()` at/over budget refuses the batch, and drops back to accepting once the queue drains.
 
-**Playwright** — Chromium needs the launch arg **`--use-fake-device-for-media-stream`** (a synthetic camera, so `getUserMedia` resolves headlessly with no hardware). Add a `camera.spec.ts` running in **both** existing projects — this is the one feature whose whole point is that desktop and mobile behave alike, so it must be asserted on both:
+**Playwright** — Chromium needs the launch arg **`--use-fake-device-for-media-stream`** (a synthetic camera, so `getUserMedia` resolves headlessly with no hardware). New `camera.spec.ts`:
 
 - shutter → review → **Use photo** → tile appears in the gallery, category count +1;
 - shutter → **Retake** → back to live, no photo written;
 - **Choose existing photo** with 3 files in category scope → 3 tiles, count +3;
+- a file over the size guard, and a non-image file, are **skipped and reported** while the good files in the same selection still land (§5.1);
 - from the **Draft row** camera button, the sheet opens **in place** — no navigation to the Gallery (§3.4);
 - permission **denied** → `Unavailable` state still offers the picker, and picking still works.
+
+**It must actually run on both device types — which takes a config change.** Today `desktop-chromium` has `testMatch: /responsive\.spec\.ts/` ([`playwright.config.ts:44`](../../src/frontend/clothesline-e2e/playwright.config.ts#L44)), so it runs *that spec and nothing else*. A new `camera.spec.ts` would therefore run **only** on `mobile-chromium` and silently never be exercised on desktop — for the one feature whose entire premise is that desktop and mobile now behave alike. Widen that project's `testMatch` to include `camera.spec.ts`.
+
+**And the mobile project must prove it is really mobile.** The desktop/touch split in §3.2–§3.3 hangs on `matchMedia('(pointer: coarse)')`. If Pixel 7 emulation does not satisfy that query, the mobile run would quietly exercise the **desktop** control set and still pass — green tests asserting the wrong UI, which is worse than a red one. So `camera.spec.ts` asserts the branch directly: on `mobile-chromium` the **facing-flip** control and **"Use device camera"** are present; on `desktop-chromium` the **device `<select>`** is present and **"Use device camera" is absent** (§3.2).
 
 **On permissions — the grant must be per-test, not global.** The config currently sets `permissions: []` at [`playwright.config.ts:28`](../../src/frontend/clothesline-e2e/playwright.config.ts#L28). Do **not** change that to `['camera']`: a blanket grant makes the denied-permission test above impossible to write. Grant camera in the tests that need a live stream (`context.grantPermissions(['camera'])`), and let the denied test simply run under the default. The two cases are the point of the state machine, so the harness has to be able to express both.
 
