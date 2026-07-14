@@ -1,6 +1,6 @@
 # Technical Implementation Spec — Clothesline (Phase 1.05: Camera)
 
-> **Amends:** [`specs/01-mvp/technical-implementation-spec.md`](../01-mvp/technical-implementation-spec.md) §6.2 (Photo capture screen) and §8.2 step 1 (capture)
+> **Supersedes:** [`specs/01-mvp/technical-implementation-spec.md`](../01-mvp/technical-implementation-spec.md) §6.2, the *Photo capture* row — and **only** that (see §10)
 > **Companion to:** [`business/07-prd-phase1-mvp.md`](../../business/07-prd-phase1-mvp.md) §4.5 (Photos)
 > **Phase:** 1.05 — an increment on the shipped MVP, not a new phase of the product
 > **Document date:** 14 July 2026
@@ -78,20 +78,28 @@ stateDiagram-v2
 
     Live --> Review: shutter (frame grabbed)
     Review --> Live: Retake
-    Review --> Saving: Use photo
+    Review --> SavingFrame: Use photo
 
-    Live --> Saving: file(s) chosen (picker)
-    Unavailable --> Saving: file(s) chosen (picker)
-    Live --> Saving: OS camera app returns (mobile)
+    Live --> SavingFiles: file(s) chosen (picker)
+    Unavailable --> SavingFiles: file(s) chosen (picker)
+    Live --> SavingFiles: OS camera app returns (mobile)
 
-    Saving --> [*]: docs + bytes written, sheet closes
-    Saving --> Review: write failed (retryable)
+    SavingFrame --> [*]: written, sheet closes
+    SavingFrame --> Review: write failed — frame retained, Use photo retries
+
+    SavingFiles --> [*]: all written, sheet closes
+    SavingFiles --> Live: partial failure — N of M reported, successes kept
+    SavingFiles --> Unavailable: partial failure, no camera
 
     Live --> [*]: Cancel
     Unavailable --> [*]: Cancel
 ```
 
+**The two save paths fail differently, so they are two states.** A failed **frame** save has something to fall back to — the grabbed frame is still in hand, so we return to `Review` with the frame intact and *Use photo* becomes a retry; nothing is lost. A failed **file** save has no such thing: per §5 it does not roll back, so it returns to whichever state the picker was opened from (`Live`, or `Unavailable` on a camera-less machine), reporting `2 of 5 photos couldn't be added` while the successes keep their photos. Collapsing these into one `Saving` state would have sent a failed picker save into `Review` with no frame to review.
+
 **`Unavailable` is a first-class state, not an error.** A laptop with no webcam, a denied permission, a camera held by another tab, an insecure context — all land here, and all of them still show **"Choose existing photo"** as the primary action, plus the specific reason and a **Try again** button where retrying can help (permission denied, device busy). The button that opens the sheet is *never* disabled on the grounds that a camera might be missing; we find out by asking.
+
+**Modal behaviour.** `role="dialog" aria-modal="true"`, as the existing lightbox already does. Focus moves to the sheet on open and is **trapped** inside it; **Escape** closes (and stops the stream, §6); focus returns to the camera button that opened it. The `SavingFiles` progress (`Adding 3 of 5…`) is announced via `aria-live="polite"`, and the failure report via `role="alert"`.
 
 ### 3.2 Controls
 
@@ -112,11 +120,34 @@ stateDiagram-v2
 
 `navigator.mediaDevices.enumerateDevices()` filtered to `kind === 'videoinput'`. Device **labels are empty until a camera permission has been granted**, so enumeration runs *after* the first successful `getUserMedia`, never before.
 
-- **0 or 1 device** → the control is not rendered.
-- **Exactly 2** (the phone case: front + rear) → an icon **cycle** button that flips between them.
-- **3 or more** (the desktop case: built-in + external + virtual/OBS) → a `<select>` labelled with each device's `label`.
+The two renderings are chosen by **form factor, not by device count**:
 
-Selection is applied by `deviceId` (`{ video: { deviceId: { exact: id } } }`), which is precise on both platforms. `facingMode: 'environment'` is used only for the **initial** request, as a hint that the rear camera is the one we want on a phone; after that, `deviceId` governs. The chosen `deviceId` is remembered in `localStorage` so a desktop user with three webcams does not re-pick every time; a stored id that no longer resolves falls back to the default.
+| | Control | Switches by |
+|---|---|---|
+| **Touch** (`pointer: coarse`) | An icon **flip** button: rear ⇄ front. | `facingMode` (`'environment'` ⇄ `'user'`) |
+| **Desktop** | A `<select>` of the enumerated devices, by `label`. | `deviceId` |
+
+**Counting devices would be wrong.** A modern phone enumerates *far* more than two video inputs — an iPhone reports front, back-wide, back-ultra-wide, and often a telephoto. A count-based rule ("exactly 2 → phone") therefore sends phones down the desktop branch and puts a `<select>` of cryptic hardware labels on a touch screen, which is the exact UI this control exists to avoid. Asking the platform for **`facingMode`** instead lets the OS pick the right physical lens behind "back", which is what the user actually means.
+
+The control is hidden when there is nothing to switch to: fewer than 2 video inputs, or (on touch) only one `facingMode` available.
+
+Desktop's `deviceId` choice is remembered in `localStorage`, so a user with three webcams does not re-pick every time; a stored id that no longer resolves falls back to the default. **Touch does not persist a facing preference** — the sheet always opens rear-facing, because a load photo is a photo *of the clothes*, and a front-camera default would be a bizarre thing to inherit from a session weeks ago.
+
+### 3.4 Entry points — and one the modal lets us fix
+
+PRD §4.5 describes per-category capture as one gesture: *"next to each category is a camera button — she can tap it to photograph that item type."* The shipped app does not do that. [`Draft.tsx:156`](../../src/frontend/clothesline-web/src/routes/Draft.tsx#L156) **navigates to the Gallery**, where the user must find and tap a *second* camera button before any camera opens. Two taps and a screen transition to take one photo, on the screen where itemizing is supposed to take under 60 seconds (MVP spec §6.3).
+
+That detour was close to forced in the MVP, because capture *was* a route — the hidden input lived in the Gallery. **`CameraSheet` is a component, not a screen**, so the detour is now gratuitous:
+
+| Entry point | Today | With `CameraSheet` |
+|---|---|---|
+| **Draft row camera** ([`Draft.tsx:156`](../../src/frontend/clothesline-web/src/routes/Draft.tsx#L156)) | → navigate to Gallery → tap camera | **opens the sheet in place**, scoped to that category |
+| **Gallery AppBar camera** ([`Gallery.tsx:96-106`](../../src/frontend/clothesline-web/src/routes/Gallery.tsx#L96-L106)) | → tap camera | opens the sheet, scoped by `?category=` |
+| Sent / Closed row photo icons | → Gallery (viewing) | unchanged — these are *view* affordances, not capture |
+
+Both capture entry points mount the **same** `<CameraSheet>` with the same props (`loadId`, optional `categoryId`); only the scope differs, and the scope is exactly what already decides bundle-vs-category and therefore `multiple` (§5). The Gallery button stays — a user who is already looking at the gallery should be able to add from there — but it is no longer the *only* way in, and the Draft screen gets the one-tap capture the PRD actually specified.
+
+*(This is the sole UX change here beyond the camera itself. It is in scope because it is a direct consequence of capture becoming a component: leaving the detour in place would mean shipping the refactor and none of its benefit.)*
 
 ---
 
@@ -189,6 +220,10 @@ src/frontend/clothesline-web/src/routes/Gallery.tsx
           The `?category=` scope it already computes decides bundle vs. category
           (and therefore `multiple`, §5).
 
+src/frontend/clothesline-web/src/routes/Draft.tsx
+    EDIT  the row camera button opens <CameraSheet> for that category in place,
+          instead of navigating to the Gallery (§3.4).
+
 src/frontend/clothesline-web/src/theme.css
     EDIT  .camera-sheet / .camera-stage / .camera-controls, alongside the
           existing .photo-lightbox rules.
@@ -204,13 +239,17 @@ No changes under `src/backend/`, `src/frontend/clothesline-web/src/db/`, or `asp
 - `navigator.mediaDevices` stubbed. Assert: tracks are stopped on unmount, on cancel, and before a device switch; `NotAllowedError` / `NotFoundError` / `NotReadableError` / absent `mediaDevices` each map to the right `Unavailable` reason; enumeration happens only after a grant; a stale stored `deviceId` falls back to the default.
 - `compress.test.ts` — new: asserts `createImageBitmap` is called with `{ imageOrientation: 'from-image' }` (§4.1).
 
-**Playwright** — Chromium takes `--use-fake-device-for-media-stream` (a synthetic camera, so `getUserMedia` resolves headlessly) and needs `permissions: ['camera']`, currently `[]` at [`playwright.config.ts:28`](../../src/frontend/clothesline-e2e/playwright.config.ts#L28). Add a `camera.spec.ts` running in **both** existing projects — this is the one feature whose whole point is that desktop and mobile behave alike, so it must be asserted on both:
+**Playwright** — Chromium needs the launch arg **`--use-fake-device-for-media-stream`** (a synthetic camera, so `getUserMedia` resolves headlessly with no hardware). Add a `camera.spec.ts` running in **both** existing projects — this is the one feature whose whole point is that desktop and mobile behave alike, so it must be asserted on both:
+
 - shutter → review → **Use photo** → tile appears in the gallery, category count +1;
 - shutter → **Retake** → back to live, no photo written;
 - **Choose existing photo** with 3 files in category scope → 3 tiles, count +3;
+- from the **Draft row** camera button, the sheet opens **in place** — no navigation to the Gallery (§3.4);
 - permission **denied** → `Unavailable` state still offers the picker, and picking still works.
 
-The existing [`photos.spec.ts`](../../src/frontend/clothesline-e2e/tests/photos.spec.ts) drives `setInputFiles` on `data-testid="photo-input"`. That testid **must survive** on the picker input inside the sheet (its specs — including the offline capture/upload one — are about the write path, not the camera, and should keep passing with only the extra step of opening the sheet).
+**On permissions — the grant must be per-test, not global.** The config currently sets `permissions: []` at [`playwright.config.ts:28`](../../src/frontend/clothesline-e2e/playwright.config.ts#L28). Do **not** change that to `['camera']`: a blanket grant makes the denied-permission test above impossible to write. Grant camera in the tests that need a live stream (`context.grantPermissions(['camera'])`), and let the denied test simply run under the default. The two cases are the point of the state machine, so the harness has to be able to express both.
+
+The existing [`photos.spec.ts`](../../src/frontend/clothesline-e2e/tests/photos.spec.ts) drives `setInputFiles` on `data-testid="photo-input"`, and **will need editing** — its capture helper must now open the sheet before setting files. Keep the `photo-input` testid on the picker input inside the sheet so the change stays to one shared helper. Those specs (including the offline capture → upload-on-reconnect one) are about the **write path**, not the camera; they must go on passing, and if any of them fails for a reason other than the extra open-the-sheet step, this spec has broken something it promised not to touch (§1.2).
 
 ---
 
@@ -244,7 +283,12 @@ What this spec **overrides** in [`specs/01-mvp/technical-implementation-spec.md`
 |---|---|---|
 | MVP **§6.2**, the *Photo capture* row | **§1.2** (and §3 for the surface) | Capture was a hidden `<input capture="environment">` — the OS camera app on mobile, and on desktop a silent degradation to a file picker with no camera access at all. It is now an in-app `getUserMedia` camera on both platforms, with the OS camera app kept as a mobile-only per-shot option. The row's **preview + confirm** was specced in Phase 1 but never built; §3.1 delivers it. |
 
-**Deliberately *not* superseded:** MVP **§8** in its entirety, including §8.2 step 1. The byte path — compress → stash locally → `local_only` → upload queue → Blob — is untouched by this spec. Where the bytes came from is not something §8 ever asserted: a camera frame and a picked file are both a `Blob` by the time they reach it. Annotating it would be noise, and the value of the supersession convention depends on it marking **reversed decisions**, not every place a reader might land.
+**Deliberately *not* superseded**, though a reader might expect them to be:
+
+- **MVP §8 in its entirety**, including §8.2 step 1. The byte path — compress → stash locally → `local_only` → upload queue → Blob — is untouched. Where the bytes came *from* is not something §8 ever asserted: a camera frame and a picked file are both a `Blob` by the time they reach it.
+- **MVP §6.2, the *Load — Draft* row.** It says the row's camera button "capture → auto-creates a `LoadItem`". That is still exactly true — §3.4 makes it *more* true by opening the camera in place instead of detouring through the Gallery. The row described the intent; the implementation drifted from it. Nothing to reverse.
+
+Both are cases where the convention could have been applied and shouldn't be: it earns its keep only while it marks **reversed decisions**, not every passage a reader might land on near a change.
 
 ---
 
