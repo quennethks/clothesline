@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router'
 import { useLiveRxQuery, useRxDatabase } from 'rxdb/plugins/react'
 import type { ClotheslineDatabase } from '../db'
 import { useCurrentUser } from '../auth/useCurrentUser'
-import { SignOutButton } from '../auth/SignOutButton'
+import { AccountMenu } from '../components/AccountMenu'
 import { createLoad, deleteLoad, duplicateLoad } from '../domain/loads'
 import type { LoadDocType } from '../db/schemas/loads.schema'
 import { AppBar } from '../components/AppBar'
@@ -215,7 +215,7 @@ export function Home() {
             >
               <Icon name="plus-lg" />
             </button>
-            <SignOutButton />
+            <AccountMenu />
           </div>
         }
       />
@@ -238,6 +238,9 @@ export function Home() {
 
         {shown.length === 0 ? (
           <div className="empty-note">
+            <span className="empty-icon">
+              <Icon name={loads.length === 0 ? 'bag' : 'check-circle'} />
+            </span>
             {loads.length === 0
               ? 'No loads yet. Tap + to start counting a load.'
               : 'No loads with this status.'}

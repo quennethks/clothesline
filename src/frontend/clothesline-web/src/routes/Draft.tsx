@@ -8,6 +8,7 @@ import { sendLoad } from '../domain/loads'
 import { nowIso } from '../domain/shared'
 import { AppBar } from '../components/AppBar'
 import { Icon } from '../components/Icon'
+import { LoadScreenSkeleton } from '../components/Skeleton'
 import { Stepper } from '../components/Stepper'
 import { useToast } from '../components/Toast'
 
@@ -32,7 +33,7 @@ export function Draft({ loadId }: { loadId: string }) {
     query: categoriesQuery,
   })
 
-  if (!load || !db) return <p className="screen-body">Loading…</p>
+  if (!load || !db) return <LoadScreenSkeleton />
 
   const total = categories.reduce((sum, category) => sum + category.count_sent, 0)
 
@@ -69,7 +70,7 @@ export function Draft({ loadId }: { loadId: string }) {
                 thumbnail) is added; the per-row icons below scope to a category. */}
             <button
               type="button"
-              className="iconbtn ghost"
+              className="iconbtn"
               aria-label="Load photos"
               title="Load photos"
               onClick={() => navigate(`/loads/${loadId}/gallery`)}
@@ -78,7 +79,7 @@ export function Draft({ loadId }: { loadId: string }) {
             </button>
             <button
               type="button"
-              className="iconbtn"
+              className="iconbtn ghost"
               aria-label="Send load"
               title="Send load"
               onClick={handleSend}
@@ -91,10 +92,9 @@ export function Draft({ loadId }: { loadId: string }) {
 
       <div className="screen-body">
         <div className="center-card">
-          <div className="d-flex align-items-center gap-2 mb-1">
+          <div className="d-flex align-items-center gap-2 mb-3">
             <input
-              className="form-control form-control-lg border-0 px-0 fw-bold"
-              style={{ fontSize: '1.4rem', boxShadow: 'none' }}
+              className="title-input"
               aria-label="Load name"
               value={load.name}
               onChange={(e) => patchLoad({ name: e.target.value })}
@@ -133,6 +133,9 @@ export function Draft({ loadId }: { loadId: string }) {
           <div>
             {categories.length === 0 ? (
               <div className="empty-note">
+                <span className="empty-icon">
+                  <Icon name="bag" />
+                </span>
                 No categories left. Add one below to start counting.
               </div>
             ) : (

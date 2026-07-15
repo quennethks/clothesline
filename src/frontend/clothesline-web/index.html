@@ -3,8 +3,20 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>clothesline-web</title>
+    <link rel="apple-touch-icon" href="/favicon.svg" />
+    <!-- viewport-fit=cover so the installed PWA can paint under the notch/home
+         indicator rather than letterboxing itself. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <!-- The browser chrome (and the Android status bar in standalone mode) takes
+         its colour from here, so it has to track the theme or the app looks like
+         it's wearing someone else's hat in dark mode. -->
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#118a90" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0d1c20" />
+    <meta
+      name="description"
+      content="Track what you send to the laundry and what comes back. Works offline."
+    />
+    <title>Clothesline</title>
   </head>
   <body>
     <div id="root"></div>

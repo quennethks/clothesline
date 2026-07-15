@@ -135,9 +135,9 @@ export function Gallery() {
 
           {photos.length === 0 ? (
             <div className="empty-note" data-testid="gallery-empty">
-              <div className="mb-2" style={{ fontSize: '2rem', color: 'var(--aqua-300)' }}>
+              <span className="empty-icon">
                 <Icon name="images" />
-              </div>
+              </span>
               No photos yet. Tap the camera to add one.
             </div>
           ) : (

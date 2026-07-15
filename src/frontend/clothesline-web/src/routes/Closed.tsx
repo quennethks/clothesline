@@ -5,6 +5,7 @@ import type { ClotheslineDatabase } from '../db'
 import { closeLoad, setReceivedCount } from '../domain/reconcile'
 import { AppBar } from '../components/AppBar'
 import { Icon } from '../components/Icon'
+import { LoadScreenSkeleton } from '../components/Skeleton'
 import { Stepper } from '../components/Stepper'
 import { useToast } from '../components/Toast'
 
@@ -27,9 +28,12 @@ export function Closed({ loadId }: { loadId: string }) {
     query: categoriesQuery,
   })
 
-  if (!load || !db) return <p className="screen-body">Loading…</p>
+  if (!load || !db) return <LoadScreenSkeleton />
 
-  const totalReceived = categories.reduce((sum, category) => sum + (category.count_received ?? 0), 0)
+  const totalReceived = categories.reduce(
+    (sum, category) => sum + (category.count_received ?? 0),
+    0,
+  )
   const isClosed = load.status === 'closed'
 
   async function handleSave() {
@@ -48,8 +52,14 @@ export function Closed({ loadId }: { loadId: string }) {
         title={load.shop_name ?? load.name}
         onBack={() => navigate('/')}
         actions={
-          <button type="button" className="iconbtn" aria-label="Save" title="Save" onClick={handleSave}>
-            <Icon name="save" />
+          <button
+            type="button"
+            className="iconbtn ghost"
+            aria-label="Save"
+            title="Save"
+            onClick={handleSave}
+          >
+            <Icon name="floppy" />
           </button>
         }
       />

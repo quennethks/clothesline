@@ -14,7 +14,7 @@ vi.mock('../auth/useCurrentUser', () => ({
   }),
 }))
 
-// Home renders SignOutButton, which reaches for the OIDC context this test
+// Home renders AccountMenu, which reaches for the OIDC context this test
 // deliberately doesn't mount.
 const signoutRedirect = vi.fn()
 const removeUser = vi.fn()
@@ -79,11 +79,12 @@ describe('Home', () => {
       </MemoryRouter>,
     )
 
-    fireEvent.click(screen.getByLabelText('Sign out'))
+    // Sign out now lives inside the account menu; open it first.
+    fireEvent.click(screen.getByLabelText('Account menu'))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Sign out' }))
     expect(signoutRedirect).not.toHaveBeenCalled()
 
-    // The icon button and the dialog's confirm button share the name
-    // "Sign out", so reach for the one inside the dialog.
+    // Choosing the menu item opens the confirm dialog (and closes the menu).
     const dialog = screen.getByRole('dialog')
     fireEvent.click(within(dialog).getByRole('button', { name: 'Sign out' }))
     await waitFor(() => expect(signoutRedirect).toHaveBeenCalledOnce())

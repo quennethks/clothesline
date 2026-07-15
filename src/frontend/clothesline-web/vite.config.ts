@@ -22,9 +22,11 @@ export default defineConfig({
     VitePWA({
       registerType: 'autoUpdate',
       // Precaches the app shell + category template (spec §6.4) so the
-      // installed app opens with no network.
+      // installed app opens with no network. woff2 is in the list because the
+      // self-hosted Inter files are part of the shell — leave them out and the
+      // offline app silently falls back to the system font.
       workbox: {
-        globPatterns: ['**/*.{js,css,html,svg,png,ico}'],
+        globPatterns: ['**/*.{js,css,html,svg,png,ico,woff2}'],
       },
       manifest: {
         name: 'Clothesline',

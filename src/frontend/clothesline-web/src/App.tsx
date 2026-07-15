@@ -10,7 +10,7 @@ import { Gallery } from './routes/Gallery'
 import { Home } from './routes/Home'
 import { LoadDetail } from './routes/LoadDetail'
 import { Receive } from './routes/Receive'
-import { SyncStatusIndicator } from './sync/SyncStatusIndicator'
+import { SyncProvider } from './sync/SyncProvider'
 
 function ReceiveRoute() {
   const { id } = useParams<{ id: string }>()
@@ -32,19 +32,23 @@ function AuthenticatedApp() {
   return (
     <DbProvider>
       <ToastProvider>
-        <div className="stage">
-          <div className="app shadow-sm">
-            <Routes>
-              <Route path="/" element={<Home />} />
-              <Route path="/loads/:id" element={<LoadDetail />} />
-              <Route path="/loads/:id/receive" element={<ReceiveRoute />} />
-              <Route path="/loads/:id/checkoff" element={<CheckoffRoute />} />
-              <Route path="/loads/:id/gallery" element={<Gallery />} />
-            </Routes>
-            <SyncStatusIndicator />
-            <InstallPrompt />
+        {/* SyncProvider runs replication + the photo upload queue and publishes
+            status via context; the badge that shows it now lives only in the
+            account menu (Home), so the engine sits high here, always mounted. */}
+        <SyncProvider>
+          <div className="stage">
+            <div className="app">
+              <Routes>
+                <Route path="/" element={<Home />} />
+                <Route path="/loads/:id" element={<LoadDetail />} />
+                <Route path="/loads/:id/receive" element={<ReceiveRoute />} />
+                <Route path="/loads/:id/checkoff" element={<CheckoffRoute />} />
+                <Route path="/loads/:id/gallery" element={<Gallery />} />
+              </Routes>
+              <InstallPrompt />
+            </div>
           </div>
-        </div>
+        </SyncProvider>
       </ToastProvider>
     </DbProvider>
   )

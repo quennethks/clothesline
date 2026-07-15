@@ -4,6 +4,7 @@ import { useLiveRxQuery, useRxDatabase } from 'rxdb/plugins/react'
 import type { ClotheslineDatabase } from '../db'
 import { submitReceivedTotal } from '../domain/receive'
 import { AppBar } from '../components/AppBar'
+import { LoadScreenSkeleton } from '../components/Skeleton'
 
 export function Receive({ loadId }: { loadId: string }) {
   const navigate = useNavigate()
@@ -14,7 +15,7 @@ export function Receive({ loadId }: { loadId: string }) {
   const { results: loads } = useLiveRxQuery({ collection: 'loads', query: loadQuery })
   const load = loads[0]
 
-  if (!load || !db) return <p className="screen-body">Loading…</p>
+  if (!load || !db) return <LoadScreenSkeleton />
 
   async function submit(total: number | null) {
     const outcome = await submitReceivedTotal(db!, loadId, total)
@@ -44,7 +45,11 @@ export function Receive({ loadId }: { loadId: string }) {
           </div>
 
           <div className="d-flex justify-content-end gap-2 mt-2">
-            <button type="button" className="btn btn-outline-secondary" onClick={() => submit(null)}>
+            <button
+              type="button"
+              className="btn btn-outline-secondary"
+              onClick={() => submit(null)}
+            >
               Skip
             </button>
             <button

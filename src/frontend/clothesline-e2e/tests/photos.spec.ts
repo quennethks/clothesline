@@ -77,8 +77,11 @@ test.describe('photos', () => {
     await page.getByRole('button', { name: 'Photos for Towels' }).click()
 
     // --- offline capture ---
+    // context.setOffline deterministically enforces offline here; the sync badge
+    // now lives only in the Home account menu, and this step runs on the gallery
+    // screen, so there's nothing to assert on it here. The real proof the offline
+    // path worked is the cross-device fetch after reconnect, below.
     await context.setOffline(true)
-    await expect(page.getByTestId('sync-status')).toHaveAttribute('data-status', 'offline')
     await attachPhoto(page)
     // Viewable immediately, with no network: the bytes are on this device
     // (spec §8.3's dominant case).

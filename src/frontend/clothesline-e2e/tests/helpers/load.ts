@@ -42,6 +42,24 @@ export async function goHome(page: Page): Promise<void> {
 }
 
 /**
+ * The sync indicator now lives inside the Home account menu (the ⋮) rather than
+ * on every screen, so reading it means opening that menu. Must be called on the
+ * Home screen. Opens the menu, asserts the status, then closes it again so the
+ * overlay doesn't intercept later clicks.
+ */
+export async function expectSyncStatus(
+  page: Page,
+  status: string,
+  opts?: { timeout?: number },
+): Promise<void> {
+  await page.getByRole('button', { name: 'Account menu' }).click()
+  await expect(page.getByTestId('sync-status')).toHaveAttribute('data-status', status, opts)
+  await page.keyboard.press('Escape')
+  // The badge only exists while the menu is open, so its absence confirms closed.
+  await expect(page.getByTestId('sync-status')).toHaveCount(0)
+}
+
+/**
  * Clicks a load card's Duplicate/Delete. Below 420px those collapse into an
  * overflow menu (theme.css) — which is exactly the width a phone runs at, so
  * the helper opens the menu when the inline buttons aren't there.

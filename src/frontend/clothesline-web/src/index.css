@@ -1,26 +1,129 @@
+/* Inter, self-hosted rather than pulled from a CDN, so the installed PWA renders
+   in its own typeface with no network (vite.config.ts precaches the woff2 for the
+   same reason).
+   The face is declared by hand instead of importing the package's index.css,
+   which pulls in all seven subsets: precache takes no notice of unicode-range and
+   would ship ~170KB of Cyrillic/Greek/Vietnamese we never render. The latin subset
+   below covers U+0000-00FF (so accented shop names are fine) plus the punctuation
+   the UI actually uses — including the U+2212 minus in the stepper. */
+@font-face {
+  font-family: 'Inter Variable';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url('@fontsource-variable/inter/files/inter-latin-wght-normal.woff2')
+    format('woff2-variations');
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* Design tokens. Two layers:
+   1. the raw aqua ramp + neutrals — the palette, never consumed directly by a component
+   2. semantic tokens (--surface, --text, --accent…) — what components actually use
+   Dark mode remaps layer 2 only, which is what keeps it to one block instead of a
+   parallel stylesheet. */
+
 :root {
+  /* ---- palette ---- */
   --aqua-900: #0b3d40;
+  --aqua-800: #0d5256;
   --aqua-700: #0f6b70;
   --aqua-600: #118a90;
   --aqua-500: #16a9b0;
   --aqua-400: #2bc4cb;
   --aqua-300: #7fdfe3;
+  --aqua-200: #b2ecee;
   --aqua-100: #d6f4f5;
   --aqua-050: #eefafb;
 
-  --ink: #122a2c;
-  --muted: #5c7477;
-  --line: #d3e6e7;
-  --bg: #f3f9f9;
+  --red-600: #c0362c;
+  --red-500: #e0574c;
+  --red-100: #fdeeec;
+  --red-200: #f2b8b3;
 
-  --danger: #c0362c;
-  --danger-bg: #fdeeec;
-  --danger-line: #f2b8b3;
+  --amber-100: #fff3d6;
+  --amber-700: #8a6100;
+  --green-100: #e2f5e5;
+  --green-700: #1f7a37;
+  --slate-100: #eceff1;
+  --slate-600: #546066;
 
-  --sans: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  /* ---- radius ---- */
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 16px;
+  --r-xl: 22px;
+  --r-pill: 999px;
 
-  color-scheme: light;
-  color: var(--ink);
+  /* ---- elevation. Aqua-tinted rather than neutral black, so cards sit *in*
+     the palette instead of on top of it. ---- */
+  --shadow-1: 0 1px 2px rgb(15 107 112 / 6%), 0 1px 3px rgb(15 107 112 / 4%);
+  --shadow-2: 0 4px 10px rgb(15 107 112 / 8%), 0 2px 4px rgb(15 107 112 / 5%);
+  --shadow-3: 0 12px 28px rgb(15 107 112 / 12%), 0 4px 8px rgb(15 107 112 / 6%);
+  --shadow-4: 0 24px 56px rgb(15 107 112 / 16%), 0 8px 16px rgb(15 107 112 / 8%);
+
+  /* ---- type ---- */
+  --sans: 'Inter Variable', 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --fs-xs: 0.7rem;
+  --fs-sm: 0.8rem;
+  --fs-base: 0.9rem;
+  --fs-md: 1rem;
+  --fs-lg: 1.15rem;
+  --fs-xl: 1.5rem;
+  --fs-hero: 2.6rem;
+  --track-tight: -0.014em;
+  --track-wide: 0.06em;
+
+  /* ---- spacing ---- */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 22px;
+  --s-6: 30px;
+
+  /* ---- motion ---- */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --dur-fast: 0.12s;
+  --dur-base: 0.2s;
+
+  /* ---- semantic: light ---- */
+  --surface: #fff;
+  --surface-2: var(--aqua-050);
+  --surface-sunken: #f3f9f9;
+  --surface-inverse: var(--aqua-900);
+
+  --text: #122a2c;
+  --text-muted: #5c7477;
+  --text-on-accent: #fff;
+
+  --border: #dbeced;
+  --border-strong: #bcdcde;
+
+  --accent: var(--aqua-600);
+  --accent-hover: var(--aqua-700);
+  --accent-soft: var(--aqua-050);
+  --accent-soft-hover: var(--aqua-100);
+  --accent-text: var(--aqua-700);
+
+  --danger: var(--red-600);
+  --danger-bg: var(--red-100);
+  --danger-line: var(--red-200);
+
+  --focus-ring: 0 0 0 3px rgb(43 196 203 / 45%);
+
+  --appbar-h: 68px;
+
+  /* Legacy aliases — theme.css was ported from the prototype against these.
+     Kept so the two stylesheets stay in sync while they're both consumed. */
+  --ink: var(--text);
+  --muted: var(--text-muted);
+  --line: var(--border);
+  --bg: var(--surface-sunken);
+
+  color-scheme: light dark;
+  color: var(--text);
   background: var(--bg);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -28,15 +131,190 @@
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Dark mode. The surfaces are aqua-tinted charcoals, not neutral grey — a pure
+   grey UI next to an aqua accent reads as two unrelated palettes. The accent
+   lightens to --aqua-400/500 because --aqua-600 does not hold contrast on dark. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --surface: #14262a;
+    --surface-2: #1b3238;
+    --surface-sunken: #0d1c20;
+    --surface-inverse: #e8f6f7;
+
+    --text: #e6f2f3;
+    --text-muted: #93aeb2;
+    --text-on-accent: #04262a;
+
+    --border: #27444a;
+    --border-strong: #375c63;
+
+    --accent: var(--aqua-400);
+    --accent-hover: var(--aqua-300);
+    --accent-soft: #17333a;
+    --accent-soft-hover: #1e424a;
+    --accent-text: var(--aqua-300);
+
+    --danger: #ff8a7e;
+    --danger-bg: #3a1f1d;
+    --danger-line: #6b3630;
+
+    --amber-100: #3a2f14;
+    --amber-700: #f0c76a;
+    --green-100: #16321f;
+    --green-700: #7fd39a;
+    --slate-100: #26343a;
+    --slate-600: #a3b4ba;
+
+    /* Shadows on dark: real black, and deeper — a tinted shadow is invisible
+       against a dark surface, so elevation has to come from contrast. */
+    --shadow-1: 0 1px 2px rgb(0 0 0 / 30%);
+    --shadow-2: 0 4px 12px rgb(0 0 0 / 36%);
+    --shadow-3: 0 12px 30px rgb(0 0 0 / 44%);
+    --shadow-4: 0 24px 60px rgb(0 0 0 / 52%);
+
+    --focus-ring: 0 0 0 3px rgb(127 223 227 / 40%);
+  }
+}
+
+/* ---- Bootstrap retheme ----
+   Bootstrap is imported globally but was never themed, so .btn/.form-control/.modal
+   shipped their stock blue focus ring and 6px radii next to the aqua 16px cards.
+   Remapping its variables is what makes those primitives belong to this design
+   rather than look bolted on. */
+:root {
+  --bs-body-bg: var(--surface-sunken);
+  --bs-body-color: var(--text);
+  --bs-body-font-family: var(--sans);
+  --bs-secondary-color: var(--text-muted);
+  --bs-emphasis-color: var(--text);
+
+  --bs-primary: var(--accent);
+  --bs-primary-rgb: 17, 138, 144;
+  --bs-danger: var(--danger);
+  --bs-link-color: var(--accent-text);
+  --bs-link-hover-color: var(--accent-hover);
+
+  --bs-border-color: var(--border);
+  --bs-border-radius: var(--r-md);
+  --bs-border-radius-sm: var(--r-sm);
+  --bs-border-radius-lg: var(--r-lg);
+  --bs-border-radius-xl: var(--r-xl);
+
+  --bs-focus-ring-color: rgb(43 196 203 / 45%);
+  --bs-focus-ring-width: 3px;
+}
+
+/* Bootstrap's form controls and buttons read --bs-* only for *some* properties;
+   the focus shadow and surface are baked into the component rules, so they need
+   an explicit override to pick up the theme. */
+.form-control,
+.form-select {
+  background-color: var(--surface);
+  border-color: var(--border);
+  color: var(--text);
+  border-radius: var(--r-md);
+  padding: 10px 12px;
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out);
+}
+.form-control::placeholder {
+  color: var(--text-muted);
+  opacity: 0.75;
+}
+.form-control:focus,
+.form-select:focus {
+  background-color: var(--surface);
+  color: var(--text);
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring);
+}
+/* The native date/number spinners render as dark glyphs on a dark field. */
+@media (prefers-color-scheme: dark) {
+  .form-control::-webkit-calendar-picker-indicator,
+  .form-control::-webkit-inner-spin-button {
+    filter: invert(1) opacity(0.7);
+  }
+}
+
+.btn {
+  --bs-btn-border-radius: var(--r-md);
+  font-weight: 600;
+  transition:
+    background-color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out),
+    transform 0.06s var(--ease-out);
+}
+.btn:active {
+  transform: translateY(1px);
+}
+.btn:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+.btn-outline-secondary {
+  --bs-btn-color: var(--text-muted);
+  --bs-btn-border-color: var(--border-strong);
+  --bs-btn-hover-color: var(--text);
+  --bs-btn-hover-bg: var(--surface-2);
+  --bs-btn-hover-border-color: var(--border-strong);
+}
+.btn-danger {
+  --bs-btn-bg: var(--danger);
+  --bs-btn-border-color: var(--danger);
+  --bs-btn-color: #fff;
+  --bs-btn-hover-bg: var(--red-600);
+  --bs-btn-hover-border-color: var(--red-600);
+  --bs-btn-hover-color: #fff;
+}
+
+.modal-content {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow-4);
+}
+.modal-backdrop.show {
+  opacity: 0.55;
+}
+.text-muted {
+  color: var(--text-muted) !important;
+}
+
 * {
   -webkit-tap-highlight-color: transparent;
+}
+
+/* One focus ring for the whole app. Only .btn-signin and .qty had one before —
+   every other control (including the role="button" load cards) was keyboard-invisible. */
+:where(a, button, input, select, textarea, [tabindex]):focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: var(--r-sm);
 }
 
 body {
   margin: 0;
   background: var(--bg);
-  color: var(--ink);
+  color: var(--text);
   font-family: var(--sans);
+  font-size: var(--fs-base);
+  line-height: 1.5;
+  letter-spacing: var(--track-tight);
+}
+
+/* Digits in a proportional font change width as they change value, so every
+   counter tick nudges the layout. The counter is the core interaction (spec
+   §6.3) — it has to sit still. */
+.qty,
+.count,
+.badge-count,
+.count-input,
+.sent-badge,
+.total-hero .num {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
 }
 
 /* App shell: mobile-first centred frame that widens on desktop
@@ -46,14 +324,19 @@ body {
   display: flex;
   justify-content: center;
   padding: 24px 12px 40px;
+  background:
+    radial-gradient(900px 500px at 50% -10%, var(--accent-soft), transparent 70%),
+    var(--surface-sunken);
 }
 
+/* Transparent, not --bg: the shell sits *on* the stage's gradient rather than
+   punching an opaque rectangle through it. */
 .app {
   width: 100%;
   max-width: 520px;
-  background: var(--bg);
-  border-radius: 20px;
-  overflow: hidden;
+  background: transparent;
+  border-radius: var(--r-xl);
+  overflow: visible;
 }
 
 @media (min-width: 992px) {

@@ -17,7 +17,23 @@ export function Callback() {
   }, [auth.isAuthenticated, navigate])
 
   if (auth.error) {
-    return <p role="alert">Sign-in failed: {auth.error.message}</p>
+    return (
+      <main className="landing">
+        <div className="landing-card">
+          <p className="landing-alert" role="alert">
+            Sign-in failed: {auth.error.message}
+          </p>
+        </div>
+      </main>
+    )
   }
-  return <p>Completing sign-in…</p>
+
+  return (
+    <main className="landing">
+      <div className="app-loading" role="status">
+        <span className="spinner-border" aria-hidden="true" />
+        <span className="visually-hidden">Completing sign-in…</span>
+      </div>
+    </main>
+  )
 }

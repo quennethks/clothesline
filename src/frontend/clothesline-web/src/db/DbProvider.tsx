@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { RxDatabaseProvider } from 'rxdb/plugins/react'
+import { LoadListSkeleton } from '../components/Skeleton'
 import { getDb, type ClotheslineDatabase } from './index'
 
 export function DbProvider({ children }: { children: ReactNode }) {
@@ -16,7 +17,7 @@ export function DbProvider({ children }: { children: ReactNode }) {
   }, [])
 
   if (!db) {
-    return <p>Loading…</p>
+    return <LoadListSkeleton />
   }
 
   return <RxDatabaseProvider database={db}>{children}</RxDatabaseProvider>

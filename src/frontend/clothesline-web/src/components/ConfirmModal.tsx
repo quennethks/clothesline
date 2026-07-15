@@ -24,7 +24,6 @@ export function ConfirmModal({
 }) {
   if (!open) return null
 
-  const accent = tone === 'danger' ? 'var(--danger)' : 'var(--aqua-600)'
   const confirmClass = tone === 'danger' ? 'btn btn-danger' : 'btn btn-aqua'
 
   return (
@@ -38,13 +37,13 @@ export function ConfirmModal({
         tabIndex={-1}
       >
         <div className="modal-dialog modal-dialog-centered">
-          <div className="modal-content" style={{ borderRadius: '16px' }}>
+          <div className="modal-content">
             <div className="modal-body text-center p-4">
-              <div className="mb-2" style={{ fontSize: '2rem', color: accent }}>
+              <span className={`confirm-icon ${tone}`}>
                 <Icon name={icon} />
-              </div>
-              <h6 className="fw-bold">{title}</h6>
-              <p className="text-muted small mb-4">{body}</p>
+              </span>
+              <h6 className="confirm-title">{title}</h6>
+              <p className="confirm-body">{body}</p>
               <div className="d-flex gap-2">
                 <button
                   type="button"

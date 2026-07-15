@@ -5,6 +5,7 @@ import type { ClotheslineDatabase } from '../db'
 import { nowIso } from '../domain/shared'
 import { AppBar } from '../components/AppBar'
 import { Icon } from '../components/Icon'
+import { LoadScreenSkeleton } from '../components/Skeleton'
 
 export function Sent({ loadId }: { loadId: string }) {
   const navigate = useNavigate()
@@ -20,7 +21,7 @@ export function Sent({ loadId }: { loadId: string }) {
     query: categoriesQuery,
   })
 
-  if (!load || !db) return <p className="screen-body">Loading…</p>
+  if (!load || !db) return <LoadScreenSkeleton />
 
   async function handleSendDateChange(sendDate: string) {
     const doc = await db!.loads.findOne(loadId).exec()
@@ -35,7 +36,7 @@ export function Sent({ loadId }: { loadId: string }) {
         actions={
           <button
             type="button"
-            className="iconbtn"
+            className="iconbtn ghost"
             aria-label="Start Receive"
             title="Confirm sent"
             onClick={() => navigate(`/loads/${loadId}/receive`)}
