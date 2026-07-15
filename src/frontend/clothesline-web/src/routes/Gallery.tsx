@@ -1,11 +1,12 @@
-import { useMemo, useRef, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router'
 import { useLiveRxQuery, useRxDatabase } from 'rxdb/plugins/react'
 import type { ClotheslineDatabase } from '../db'
 import type { PhotoDocType } from '../db/schemas/photos.schema'
 import { AppBar } from '../components/AppBar'
 import { Icon } from '../components/Icon'
-import { capturePhotoForCategory, capturePhotoForLoad, removePhoto } from '../photos/capture'
+import { CameraSheet } from '../photos/CameraSheet'
+import { removePhoto } from '../photos/capture'
 import { PhotoImage } from '../photos/PhotoTile'
 
 // The load's photos, joined load → categories → items → photos (spec §6.2).
@@ -20,10 +21,8 @@ export function Gallery() {
   const [searchParams] = useSearchParams()
   const categoryId = searchParams.get('category')
   const db = useRxDatabase<ClotheslineDatabase>()
-  const fileInputRef = useRef<HTMLInputElement>(null)
   const [enlarged, setEnlarged] = useState<PhotoDocType | null>(null)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [cameraOpen, setCameraOpen] = useState(false)
 
   // useLiveRxQuery's `query` must be a stable reference (see Home.tsx).
   const categoriesQuery = useMemo(() => ({ selector: { load_id: loadId } }), [loadId])
@@ -63,25 +62,6 @@ export function Gallery() {
   const scopedCategory = categories.find((category) => category.id === categoryId)
   const title = scopedCategory ? scopedCategory.category : 'Photos'
 
-  async function handleFile(event: React.ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0]
-    // Cleared immediately so re-picking the same file still fires a change event.
-    event.target.value = ''
-    if (!file || !db || !loadId) return
-
-    setBusy(true)
-    setError(null)
-    try {
-      if (categoryId) await capturePhotoForCategory(db, categoryId, file)
-      else await capturePhotoForLoad(db, loadId, file)
-    } catch (cause) {
-      console.error('photo capture failed', cause)
-      setError("That image couldn't be added. Try another photo.")
-    } finally {
-      setBusy(false)
-    }
-  }
-
   async function handleDelete(photoId: string) {
     setEnlarged(null)
     if (db) await removePhoto(db, photoId)
@@ -98,35 +78,28 @@ export function Gallery() {
             type="button"
             aria-label="Add photo"
             title="Add photo"
-            disabled={busy || !db}
-            onClick={() => fileInputRef.current?.click()}
+            disabled={!db}
+            onClick={() => setCameraOpen(true)}
           >
             <Icon name="camera" />
           </button>
         }
       />
 
-      {/* `capture` asks a phone for its camera directly; on desktop the same
-          input falls back to the file picker. */}
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept="image/*"
-        capture="environment"
-        className="visually-hidden"
-        aria-label="Photo file"
-        data-testid="photo-input"
-        onChange={handleFile}
-      />
+      {/* The camera button opens the in-app CameraSheet in place (spec §3.4),
+          scoped by the `?category=` already computed — which is what decides
+          bundle vs. category and therefore `multiple` (§5). */}
+      {cameraOpen && loadId && (
+        <CameraSheet
+          loadId={loadId}
+          categoryId={categoryId}
+          title={title}
+          onClose={() => setCameraOpen(false)}
+        />
+      )}
 
       <div className="screen-body">
         <div className="center-card">
-          {error && (
-            <div className="alert alert-danger py-2" role="alert">
-              {error}
-            </div>
-          )}
-
           {!categoryId && (
             <p className="field-label mb-2">
               The load's bundle photo, plus every photo taken against a category.

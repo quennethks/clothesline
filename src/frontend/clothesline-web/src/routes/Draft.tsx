@@ -11,12 +11,16 @@ import { Icon } from '../components/Icon'
 import { LoadScreenSkeleton } from '../components/Skeleton'
 import { Stepper } from '../components/Stepper'
 import { useToast } from '../components/Toast'
+import { CameraSheet } from '../photos/CameraSheet'
 
 export function Draft({ loadId }: { loadId: string }) {
   const navigate = useNavigate()
   const db = useRxDatabase<ClotheslineDatabase>()
   const toast = useToast()
   const [newCategoryName, setNewCategoryName] = useState('')
+  // The row camera opens the sheet *in place* rather than detouring through the
+  // Gallery (spec §3.4) — scoped to the category the button belongs to.
+  const [camera, setCamera] = useState<{ id: string; name: string } | null>(null)
 
   // useLiveRxQuery's `query` must be a stable reference (see Home.tsx).
   const loadQuery = useMemo(() => ({ selector: { id: loadId } }), [loadId])
@@ -154,6 +158,15 @@ export function Draft({ loadId }: { loadId: string }) {
                     <button
                       type="button"
                       className="mini"
+                      aria-label={`Take photo for ${category.category}`}
+                      title="Take photo"
+                      onClick={() => setCamera({ id: category.id, name: category.category })}
+                    >
+                      <Icon name="camera" />
+                    </button>
+                    <button
+                      type="button"
+                      className="mini"
                       aria-label={`Photos for ${category.category}`}
                       title="View photos"
                       onClick={() => navigate(`/loads/${loadId}/gallery?category=${category.id}`)}
@@ -199,6 +212,15 @@ export function Draft({ loadId }: { loadId: string }) {
           </div>
         </div>
       </div>
+
+      {camera && (
+        <CameraSheet
+          loadId={loadId}
+          categoryId={camera.id}
+          title={camera.name}
+          onClose={() => setCamera(null)}
+        />
+      )}
     </section>
   )
 }

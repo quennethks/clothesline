@@ -6,6 +6,14 @@
 > **Status:** Draft for build
 > **Scope:** This document describes *how* the Phase 1 MVP is built. It maps every PRD feature to a concrete technical design. It does **not** re-argue product decisions — see the PRD for the *what* and *why*.
 
+## Amendments to this spec
+
+Later specs may **supersede** individual decisions here. When they do, this document is **not rewritten** — the original text stays put and the superseded passage carries a dated ⚠️ callout pointing at whatever overrode it. This table is the index of those; everything not listed still stands as written.
+
+| Section | Superseded | Date | By |
+|---|---|---|---|
+| §6.2 — *Photo capture* row | Capture was a hidden `<input capture>` (OS camera app on mobile; no camera at all on desktop). Now an **in-app `getUserMedia` camera** on both, OS camera app kept as a mobile-only option. | 14 Jul 2026 | [Phase 1.05 §1.2](../01.05-mvp-camera/technical-implementation-spec.md#12-the-stance) |
+
 ---
 
 ## 1. Summary
@@ -447,6 +455,10 @@ Sources: [ACA — transport protocols](https://learn.microsoft.com/azure/contain
 ### 6.2 Screens
 
 These screens are based on the mobile + desktop wireframes in [`wireframe.png`](./wireframe.png). On-screen a load captures **shop name only** — the model's `shop_location` exists but is **not surfaced** in the Phase-1 UI. Desktop/responsive behaviour is in §6.5.
+
+> ⚠️ **Superseded — 14 July 2026, by [Phase 1.05 §1.2 "The stance"](../01.05-mvp-camera/technical-implementation-spec.md#12-the-stance).**
+> Applies to the **Photo capture** row of the table below. Phase 1 built capture as a hidden `<input capture="environment">`, which hands off to the **OS camera app** on mobile and — because desktop browsers ignore `capture` — silently degrades to a file picker on desktop, so the camera button could not reach a webcam at all. Capture is now an **in-app `getUserMedia` camera** (our own preview, same on both platforms), with the OS camera app kept as a mobile-only per-shot option and "choose existing photo" offered inside it. The **preview + confirm** step the row calls for was never actually built in Phase 1; Phase 1.05 §3.1 delivers it.
+> The row is left unchanged below as the original Phase 1 decision.
 
 | Screen | PRD ref | Notes |
 |---|---|---|

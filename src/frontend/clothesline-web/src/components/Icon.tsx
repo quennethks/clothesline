@@ -1,6 +1,10 @@
-// Bootstrap Icons 1.11.3 path data (viewBox 0 0 16 16), inlined so the PWA
-// carries no icon-font or CDN dependency and icons inherit currentColor.
-// Each entry is the icon's list of <path> `d` values.
+// Bootstrap Icons path data (viewBox 0 0 16 16), inlined so the PWA carries no
+// icon-font or CDN dependency and icons inherit currentColor. Each entry is the
+// icon's list of paths: a bare `d` string, or `[d, 'evenodd']` for the icons
+// whose fill only reads correctly with fill-rule="evenodd" (the cut-outs in a
+// switch-arrows or a struck-through camera would otherwise fill solid).
+type PathSpec = string | readonly [string, 'evenodd']
+
 const PATHS = {
   'arrow-left': [
     'M15 8a.5.5 0 0 0-.5-.5H2.707l3.147-3.146a.5.5 0 1 0-.708-.708l-4 4a.5.5 0 0 0 0 .708l4 4a.5.5 0 0 0 .708-.708L2.707 8.5H14.5A.5.5 0 0 0 15 8z',
@@ -69,7 +73,24 @@ const PATHS = {
     'M11 2H9v3h2z',
     'M1.5 0h11.586a1.5 1.5 0 0 1 1.06.44l1.415 1.414A1.5 1.5 0 0 1 16 2.914V14.5a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 0 14.5v-13A1.5 1.5 0 0 1 1.5 0M1 1.5v13a.5.5 0 0 0 .5.5H2v-4.5A1.5 1.5 0 0 1 3.5 9h9a1.5 1.5 0 0 1 1.5 1.5V15h.5a.5.5 0 0 0 .5-.5V2.914a.5.5 0 0 0-.146-.353l-1.415-1.415A.5.5 0 0 0 13.086 1H13v4.5A1.5 1.5 0 0 1 11.5 7h-7A1.5 1.5 0 0 1 3 5.5V1H1.5a.5.5 0 0 0-.5.5m3 4a.5.5 0 0 0 .5.5h7a.5.5 0 0 0 .5-.5V1H4zM3 15h10v-4.5a.5.5 0 0 0-.5-.5h-9a.5.5 0 0 0-.5.5z',
   ],
-} as const
+  'x-lg': [
+    'M2.146 2.854a.5.5 0 1 1 .708-.708L8 7.293l5.146-5.147a.5.5 0 0 1 .708.708L8.707 8l5.147 5.146a.5.5 0 0 1-.708.708L8 8.707l-5.146 5.147a.5.5 0 0 1-.708-.708L7.293 8z',
+  ],
+  // The rear ⇄ front switch control (spec §3.3). Bootstrap has no literal
+  // flip-camera glyph; arrow-repeat is its conventional "switch" affordance.
+  'arrow-repeat': [
+    'M11.534 7h3.932a.25.25 0 0 1 .192.41l-1.966 2.36a.25.25 0 0 1-.384 0l-1.966-2.36a.25.25 0 0 1 .192-.41m-11 2h3.932a.25.25 0 0 0 .192-.41L2.692 6.23a.25.25 0 0 0-.384 0L.342 8.59A.25.25 0 0 0 .534 9',
+    ['M8 3c-1.552 0-2.94.707-3.857 1.818a.5.5 0 1 1-.771-.636A6.002 6.002 0 0 1 13.917 7H12.9A5 5 0 0 0 8 3M3.1 9a5.002 5.002 0 0 0 8.757 2.182.5.5 0 1 1 .771.636A6.002 6.002 0 0 1 2.083 9z', 'evenodd'],
+  ],
+  // The Unavailable state's icon — no camera reachable (spec §3.1).
+  'camera-video-off': [
+    ['M10.961 12.365a2 2 0 0 0 .522-1.103l3.11 1.382A1 1 0 0 0 16 11.731V4.269a1 1 0 0 0-1.406-.913l-3.111 1.382A2 2 0 0 0 9.5 3H4.272l.714 1H9.5a1 1 0 0 1 1 1v6a1 1 0 0 1-.144.518zM1.428 4.18A1 1 0 0 0 1 5v6a1 1 0 0 0 1 1h5.014l.714 1H2a2 2 0 0 1-2-2V5c0-.675.334-1.272.847-1.634zM15 11.73l-3.5-1.555v-4.35L15 4.269zm-4.407 3.56-10-14 .814-.58 10 14z', 'evenodd'],
+  ],
+  // The partial-failure / pending-full warning (spec §5.2–5.3).
+  'exclamation-triangle-fill': [
+    'M8.982 1.566a1.13 1.13 0 0 0-1.96 0L.165 13.233c-.457.778.091 1.767.98 1.767h13.713c.889 0 1.438-.99.98-1.767zM8 5c.535 0 .954.462.9.995l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 5.995A.905.905 0 0 1 8 5m.002 6a1 1 0 1 1 0 2 1 1 0 0 1 0-2',
+  ],
+} as const satisfies Record<string, readonly PathSpec[]>
 
 export type IconName = keyof typeof PATHS
 
@@ -77,9 +98,10 @@ export function Icon({ name, className }: { name: IconName; className?: string }
   return (
     <i className={className ? `bi ${className}` : 'bi'} aria-hidden="true">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
-        {PATHS[name].map((d) => (
-          <path key={d} d={d} />
-        ))}
+        {(PATHS[name] as readonly PathSpec[]).map((spec) => {
+          const [d, rule] = typeof spec === 'string' ? [spec, undefined] : spec
+          return <path key={d} d={d} fillRule={rule} />
+        })}
       </svg>
     </i>
   )

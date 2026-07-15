@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Clothesline — Camera Prototype (Phase 1.05)</title>
+<style>
+  /* Palette lifted from the app's theme.css / the Phase 1 prototype, so this
+     reads as the same product. No external dependencies: open it from disk. */
+  :root{
+    --aqua-900:#0b3d40; --aqua-700:#0f6b70; --aqua-600:#118a90;
+    --aqua-500:#16a9b0; --aqua-400:#2bc4cb; --aqua-300:#7fdfe3;
+    --aqua-100:#d6f4f5; --aqua-050:#eefafb;
+    --ink:#122a2c; --muted:#5c7477; --line:#d3e6e7; --bg:#f3f9f9;
+    --danger:#c0392b; --warn:#b8860b; --ok:#1e8449;
+    --shell:#0d1416;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;line-height:1.5}
+
+  /* ---------- page chrome ---------- */
+  header.page{background:var(--aqua-900);color:#fff;padding:18px 20px}
+  header.page h1{margin:0;font-size:1.15rem;letter-spacing:.2px}
+  header.page p{margin:4px 0 0;color:var(--aqua-300);font-size:.85rem}
+  header.page a{color:var(--aqua-300)}
+
+  .layout{display:flex;gap:24px;align-items:flex-start;padding:20px;max-width:1400px;margin:0 auto}
+  @media(max-width:900px){ .layout{flex-direction:column} }
+
+  .panel{background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px;
+         box-shadow:0 1px 3px rgba(15,107,112,.06)}
+  .panel h2{margin:0 0 10px;font-size:.72rem;text-transform:uppercase;letter-spacing:.9px;color:var(--muted)}
+  .sidebar{width:290px;flex:none;position:sticky;top:20px}
+  @media(max-width:900px){ .sidebar{width:100%;position:static} }
+
+  .statelist{display:flex;flex-direction:column;gap:4px}
+  .statelist button{
+    text-align:left;background:transparent;border:0;border-radius:9px;padding:9px 11px;
+    cursor:pointer;color:var(--ink);font:inherit;font-size:.88rem;display:flex;gap:9px;align-items:baseline
+  }
+  .statelist button:hover{background:var(--aqua-050)}
+  .statelist button.on{background:var(--aqua-100);color:var(--aqua-900);font-weight:600}
+  .statelist .ref{font-size:.7rem;color:var(--muted);font-variant-numeric:tabular-nums;flex:none}
+  .statelist button.on .ref{color:var(--aqua-700)}
+  .group-label{font-size:.7rem;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);
+               margin:14px 0 6px;padding-left:11px}
+  .group-label:first-child{margin-top:0}
+
+  .seg{display:flex;background:var(--aqua-050);border:1px solid var(--line);border-radius:10px;padding:3px;gap:3px}
+  .seg button{flex:1;border:0;background:transparent;border-radius:7px;padding:7px;cursor:pointer;
+              font:inherit;font-size:.82rem;color:var(--muted)}
+  .seg button.on{background:#fff;color:var(--aqua-700);font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.08)}
+
+  .note{font-size:.8rem;color:var(--muted);margin:10px 0 0}
+  .note code{background:var(--aqua-050);padding:1px 4px;border-radius:4px;font-size:.9em}
+
+  /* ---------- device frames ---------- */
+  .stage{flex:1;display:flex;flex-direction:column;align-items:center;gap:16px;min-width:0}
+  .device{background:var(--shell);border-radius:30px;padding:10px;box-shadow:0 18px 50px rgba(11,61,64,.28);
+          transition:width .25s ease}
+  .device.phone{width:380px}
+  .device.desktop{width:100%;max-width:920px;border-radius:16px;padding:8px}
+  .device.desktop .screen{border-radius:10px;aspect-ratio:16/10}
+  .screen{position:relative;background:#000;border-radius:22px;overflow:hidden;aspect-ratio:9/19.5;
+          display:flex;flex-direction:column;color:#fff}
+
+  /* ---------- the simulated viewfinder ---------- */
+  .feed{position:absolute;inset:0;overflow:hidden;background:#1b2426}
+  .feed video{width:100%;height:100%;object-fit:cover;display:block}
+  .scene{position:absolute;inset:0;
+    background:
+      radial-gradient(120% 80% at 50% 8%, #3a4a4d 0%, #222c2e 55%, #161d1f 100%);}
+  /* a rumpled pile of clothes, drawn */
+  .garment{position:absolute;border-radius:46% 54% 50% 50% / 58% 42% 58% 42%;filter:blur(.3px);
+           box-shadow:inset 0 -10px 24px rgba(0,0,0,.35), 0 6px 18px rgba(0,0,0,.3)}
+  .g1{width:62%;height:26%;left:6%;top:44%;background:linear-gradient(150deg,#4d7fa8,#2f5878);transform:rotate(-7deg)}
+  .g2{width:58%;height:24%;left:32%;top:56%;background:linear-gradient(150deg,#b5654f,#82402f);transform:rotate(5deg)}
+  .g3{width:50%;height:20%;left:14%;top:64%;background:linear-gradient(150deg,#6f6f78,#45454e);transform:rotate(-3deg)}
+  .g4{width:44%;height:17%;left:40%;top:35%;background:linear-gradient(150deg,#c9b06a,#93793f);transform:rotate(9deg)}
+  .grain{position:absolute;inset:0;opacity:.05;
+    background-image:repeating-linear-gradient(0deg,#fff 0 1px,transparent 1px 2px)}
+  .held{position:absolute;left:50%;top:26%;transform:translateX(-50%) rotate(-2deg);
+        width:46%;height:34%;border-radius:8px 8px 30% 30%;
+        background:linear-gradient(160deg,#7fb4d8,#4a7fa5 60%,#3a647f);
+        box-shadow:0 14px 34px rgba(0,0,0,.45)}
+  .held::before,.held::after{content:"";position:absolute;top:0;width:26%;height:34%;
+        background:linear-gradient(160deg,#7fb4d8,#4a7fa5);border-radius:6px}
+  .held::before{left:-18%;transform:rotate(-16deg)}
+  .held::after{right:-18%;transform:rotate(16deg)}
+
+  /* ---------- sheet chrome over the feed ---------- */
+  .sheet-top{position:relative;z-index:3;display:flex;align-items:center;gap:10px;padding:14px 14px 0}
+  .sheet-title{flex:1;font-weight:600;font-size:.95rem;text-shadow:0 1px 6px rgba(0,0,0,.5)}
+  .iconbtn{background:rgba(0,0,0,.42);border:0;color:#fff;width:38px;height:38px;border-radius:50%;
+           display:inline-flex;align-items:center;justify-content:center;cursor:pointer;backdrop-filter:blur(4px)}
+  .iconbtn:hover{background:rgba(0,0,0,.62)}
+  .iconbtn svg{width:19px;height:19px;fill:currentColor}
+
+  .sheet-bottom{position:relative;z-index:3;margin-top:auto;padding:14px;
+                background:linear-gradient(to top,rgba(0,0,0,.72),rgba(0,0,0,0))}
+  .controls{display:flex;align-items:center;justify-content:space-between;gap:12px}
+  .shutter{width:70px;height:70px;border-radius:50%;border:4px solid rgba(255,255,255,.85);
+           background:#fff;cursor:pointer;flex:none;box-shadow:0 0 0 3px rgba(0,0,0,.25)}
+  .shutter:hover{background:var(--aqua-100)}
+  .shutter:disabled{opacity:.4;cursor:not-allowed}
+  .side{width:58px;display:flex;justify-content:center;flex:none}
+  .chipbtn{background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.28);color:#fff;
+           border-radius:11px;padding:9px 11px;cursor:pointer;font:inherit;font-size:.74rem;
+           display:flex;flex-direction:column;align-items:center;gap:3px;backdrop-filter:blur(6px);min-width:58px}
+  .chipbtn:hover{background:rgba(255,255,255,.26)}
+  .chipbtn svg{width:19px;height:19px;fill:currentColor}
+  .oscam{margin-top:12px;width:100%;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.26);
+         color:#fff;border-radius:11px;padding:11px;cursor:pointer;font:inherit;font-size:.84rem;
+         display:flex;align-items:center;justify-content:center;gap:8px;backdrop-filter:blur(6px)}
+  .oscam:hover{background:rgba(255,255,255,.22)}
+  .oscam svg{width:17px;height:17px;fill:currentColor}
+
+  .picker{width:100%;background:#fff;color:var(--aqua-900);border:0;border-radius:11px;padding:12px;
+          cursor:pointer;font:inherit;font-weight:600;font-size:.9rem;display:flex;align-items:center;
+          justify-content:center;gap:8px;margin-top:10px}
+  .picker svg{width:17px;height:17px;fill:currentColor}
+
+  select.devsel{background:rgba(0,0,0,.5);color:#fff;border:1px solid rgba(255,255,255,.3);
+                border-radius:9px;padding:8px 10px;font:inherit;font-size:.8rem;backdrop-filter:blur(4px);
+                max-width:230px}
+
+  /* ---------- review ---------- */
+  .frozen{position:absolute;inset:0;z-index:2;filter:saturate(1.04)}
+  .frozen::after{content:"";position:absolute;inset:0;background:rgba(0,0,0,.12)}
+  .review-actions{display:flex;gap:10px}
+  .btn{flex:1;border:0;border-radius:11px;padding:13px;cursor:pointer;font:inherit;font-weight:600;font-size:.9rem}
+  .btn-ghost{background:rgba(255,255,255,.16);color:#fff;border:1px solid rgba(255,255,255,.3)}
+  .btn-ghost:hover{background:rgba(255,255,255,.26)}
+  .btn-primary{background:#fff;color:var(--aqua-900)}
+  .btn-primary:hover{background:var(--aqua-100)}
+
+  /* ---------- unavailable / messages ---------- */
+  .center-state{position:relative;z-index:3;flex:1;display:flex;flex-direction:column;
+                align-items:center;justify-content:center;text-align:center;padding:26px;gap:6px}
+  .center-state .ic{width:56px;height:56px;border-radius:50%;background:rgba(255,255,255,.1);
+                    display:flex;align-items:center;justify-content:center;margin-bottom:6px}
+  .center-state .ic svg{width:26px;height:26px;fill:rgba(255,255,255,.75)}
+  .center-state h3{margin:0;font-size:1.02rem}
+  .center-state p{margin:0;color:rgba(255,255,255,.66);font-size:.85rem;max-width:270px}
+  .unav-bg{position:absolute;inset:0;background:#171f21}
+
+  .toast{position:absolute;left:14px;right:14px;bottom:150px;z-index:4;border-radius:11px;padding:11px 13px;
+         font-size:.83rem;display:flex;gap:9px;align-items:flex-start;backdrop-filter:blur(8px)}
+  .toast svg{width:17px;height:17px;fill:currentColor;flex:none;margin-top:2px}
+  .toast.warn{background:rgba(184,134,11,.92);color:#fff}
+  .toast.err{background:rgba(192,57,43,.93);color:#fff}
+
+  /* ---------- saving ---------- */
+  .progress-wrap{position:relative;z-index:3;flex:1;display:flex;flex-direction:column;align-items:center;
+                 justify-content:center;gap:14px;padding:30px;text-align:center}
+  .bar{width:100%;max-width:250px;height:7px;background:rgba(255,255,255,.2);border-radius:99px;overflow:hidden}
+  .bar span{display:block;height:100%;background:var(--aqua-400);border-radius:99px;width:71%}
+  .progress-wrap .count{font-size:1.02rem;font-weight:600}
+  .progress-wrap .sub{font-size:.8rem;color:rgba(255,255,255,.6)}
+
+  /* ---------- scan mode (phase 2) ---------- */
+  .bbox{position:absolute;z-index:3;border:2.5px solid var(--aqua-400);border-radius:10px;
+        box-shadow:0 0 0 9999px rgba(0,0,0,.16), 0 0 18px rgba(43,196,203,.5)}
+  .bbox .tag{position:absolute;top:-13px;left:-2px;background:var(--aqua-400);color:#06282a;
+             font-size:.7rem;font-weight:700;padding:3px 8px;border-radius:6px;white-space:nowrap}
+  .bbox.low{border-color:var(--warn);border-style:dashed}
+  .bbox.low .tag{background:var(--warn);color:#fff}
+
+  .tally{position:absolute;top:62px;left:14px;right:14px;z-index:3;display:flex;gap:6px;flex-wrap:wrap}
+  .tally .t{background:rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.16);border-radius:99px;
+            padding:4px 10px;font-size:.75rem;backdrop-filter:blur(6px)}
+  .tally .t b{color:var(--aqua-300)}
+
+  .filmstrip{position:absolute;left:0;right:0;bottom:112px;z-index:3;display:flex;gap:7px;padding:0 14px;
+             overflow-x:auto}
+  .filmstrip .fs{width:46px;height:46px;border-radius:8px;flex:none;border:2px solid rgba(255,255,255,.55);
+                 box-shadow:0 3px 10px rgba(0,0,0,.4)}
+  .fsA{background:linear-gradient(150deg,#7fb4d8,#3a647f)}
+  .fsB{background:linear-gradient(150deg,#c9b06a,#93793f)}
+  .fsC{background:linear-gradient(150deg,#b5654f,#82402f)}
+  .fsD{background:linear-gradient(150deg,#6f6f78,#45454e)}
+
+  .pop{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);z-index:5;
+       background:rgba(43,196,203,.95);color:#06282a;font-weight:800;font-size:1.05rem;
+       padding:9px 18px;border-radius:99px;box-shadow:0 8px 26px rgba(0,0,0,.4)}
+
+  .confirmbar{position:absolute;left:14px;right:14px;bottom:26px;z-index:5;background:rgba(255,255,255,.97);
+              color:var(--ink);border-radius:14px;padding:13px;box-shadow:0 10px 30px rgba(0,0,0,.4)}
+  .confirmbar p{margin:0 0 10px;font-size:.88rem;font-weight:600}
+  .confirmbar .opts{display:flex;gap:7px;flex-wrap:wrap}
+  .confirmbar .opts button{border:1px solid var(--line);background:var(--aqua-050);color:var(--aqua-900);
+              border-radius:9px;padding:7px 12px;cursor:pointer;font:inherit;font-size:.8rem;font-weight:600}
+  .confirmbar .opts button.primary{background:var(--aqua-600);color:#fff;border-color:var(--aqua-600)}
+  .confirmbar .opts button:hover{filter:brightness(.96)}
+  .scanhint{position:absolute;bottom:26px;left:14px;right:14px;z-index:3;text-align:center;
+            font-size:.78rem;color:rgba(255,255,255,.72);text-shadow:0 1px 5px rgba(0,0,0,.7)}
+
+  /* ---------- caption under the device ---------- */
+  .caption{max-width:640px;text-align:center}
+  .caption h3{margin:0 0 5px;font-size:1rem}
+  .caption p{margin:0;color:var(--muted);font-size:.88rem}
+  .caption .tag{display:inline-block;margin-top:9px;font-size:.72rem;color:var(--aqua-700);
+                background:var(--aqua-100);border-radius:99px;padding:3px 10px;font-weight:600}
+  .phase2{background:#f5e9d0 !important;color:#7a5c14 !important}
+
+  .hide{display:none !important}
+</style>
+</head>
+<body>
+
+<header class="page">
+  <h1>Clothesline — Camera prototype</h1>
+  <p>Phase 1.05 capture surface, plus the Phase 2 Scan Mode overlay it makes possible.
+     Companion to <code>technical-implementation-spec.md</code> in this folder. Static mockup — no data is saved.</p>
+</header>
+
+<div class="layout">
+  <!-- ============ sidebar ============ -->
+  <aside class="panel sidebar">
+    <h2>Device</h2>
+    <div class="seg" id="devseg">
+      <button class="on" data-dev="phone">Mobile</button>
+      <button data-dev="desktop">Desktop</button>
+    </div>
+
+    <h2 style="margin-top:18px">State</h2>
+    <div class="statelist" id="states">
+      <div class="group-label">Phase 1.05 — this spec</div>
+      <button class="on" data-state="live"><span class="ref">§3.1</span><span>Live — camera ready</span></button>
+      <button data-state="review"><span class="ref">§3.1</span><span>Review — confirm or retake</span></button>
+      <button data-state="unavailable"><span class="ref">§3.1</span><span>Unavailable — no camera</span></button>
+      <button data-state="saving"><span class="ref">§5.3</span><span>Saving a batch</span></button>
+      <button data-state="partial"><span class="ref">§5.3</span><span>Partial failure</span></button>
+      <button data-state="refused"><span class="ref">§5.2</span><span>Batch refused — pile too big</span></button>
+      <div class="group-label">Phase 2 — Scan Mode</div>
+      <button data-state="scan"><span class="ref">§9</span><span>Scanning — auto-detect</span></button>
+      <button data-state="scanlow"><span class="ref">§9</span><span>Low confidence — confirm</span></button>
+    </div>
+
+    <h2 style="margin-top:18px">Live camera</h2>
+    <div class="seg" id="feedseg">
+      <button class="on" data-feed="sim">Simulated</button>
+      <button data-feed="real">Real camera</button>
+    </div>
+    <p class="note" id="feednote">The viewfinder is drawn, so this file works opened straight from disk.
+      <b>Real camera</b> calls <code>getUserMedia</code> — it needs <code>https://</code> or
+      <code>localhost</code>, so it will fail on a <code>file://</code> URL. That failure is itself the
+      <b>Unavailable</b> state (§6).</p>
+  </aside>
+
+  <!-- ============ stage ============ -->
+  <main class="stage">
+    <div class="device phone" id="device">
+      <div class="screen" id="screen">
+
+        <!-- the feed: simulated scene or a real stream -->
+        <div class="feed" id="feed">
+          <div class="scene" id="scene">
+            <div class="grain"></div>
+            <div class="garment g1"></div>
+            <div class="garment g4"></div>
+            <div class="garment g2"></div>
+            <div class="garment g3"></div>
+            <div class="held" id="held"></div>
+          </div>
+          <video id="video" autoplay muted playsinline class="hide"></video>
+        </div>
+
+        <!-- unavailable backdrop -->
+        <div class="unav-bg hide" id="unavBg"></div>
+
+        <!-- frozen frame for Review -->
+        <div class="frozen hide" id="frozen"></div>
+
+        <!-- top bar -->
+        <div class="sheet-top" id="top">
+          <button class="iconbtn" aria-label="Close">
+            <svg viewBox="0 0 16 16"><path d="M4.646 4.646a.5.5 0 0 1 .708 0L8 7.293l2.646-2.647a.5.5 0 0 1 .708.708L8.707 8l2.647 2.646a.5.5 0 0 1-.708.708L8 8.707l-2.646 2.647a.5.5 0 0 1-.708-.708L7.293 8 4.646 5.354a.5.5 0 0 1 0-.708"/></svg>
+          </button>
+          <div class="sheet-title" id="title">Shirts</div>
+          <select class="devsel hide" id="devsel" aria-label="Camera">
+            <option>FaceTime HD Camera (built-in)</option>
+            <option>Logitech StreamCam (USB)</option>
+            <option>OBS Virtual Camera</option>
+          </select>
+          <button class="iconbtn" id="flip" aria-label="Switch camera">
+            <svg viewBox="0 0 16 16"><path d="M11 8a3 3 0 1 1-6 0 3 3 0 0 1 6 0"/><path d="M10.5 1a.5.5 0 0 1 .5.5V2h1a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h1v-.5a.5.5 0 0 1 .5-.5zM3 4v7a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V4a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1"/></svg>
+          </button>
+        </div>
+
+        <!-- ---------- Phase 2: scan overlays ---------- -->
+        <div class="tally hide" id="tally">
+          <div class="t">Shirts <b>3</b></div>
+          <div class="t">Trousers <b>1</b></div>
+          <div class="t">Socks <b>2</b></div>
+        </div>
+        <div class="bbox hide" id="bbox" style="left:26%;top:24%;width:48%;height:36%">
+          <div class="tag" id="bboxTag">Shirt · 92%</div>
+        </div>
+        <div class="pop hide" id="pop">+1 Shirt</div>
+        <div class="filmstrip hide" id="filmstrip">
+          <div class="fs fsA"></div><div class="fs fsB"></div><div class="fs fsC"></div>
+          <div class="fs fsD"></div><div class="fs fsA"></div><div class="fs fsC"></div>
+        </div>
+        <div class="scanhint hide" id="scanhint">Pan slowly across the pile — items are counted as they pass</div>
+        <div class="confirmbar hide" id="confirmbar">
+          <p>Not sure — is this a Shirt?</p>
+          <div class="opts">
+            <button class="primary">Yes, Shirt</button>
+            <button>Blouse</button>
+            <button>Jacket</button>
+            <button>Skip</button>
+          </div>
+        </div>
+
+        <!-- ---------- unavailable ---------- -->
+        <div class="center-state hide" id="unav">
+          <div class="ic">
+            <svg viewBox="0 0 16 16"><path d="M10.961 12.365a2 2 0 0 0 .522-1.103l3.11 1.382A1 1 0 0 0 16 11.731V4.269a1 1 0 0 0-1.406-.913l-3.111 1.382A2 2 0 0 0 9.5 3H4.272zM0 4a2 2 0 0 1 .166-.8l11.204 11.204A2 2 0 0 1 9.5 15H2a2 2 0 0 1-2-2z"/><path d="M13.646 14.354l-12-12 .708-.708 12 12z"/></svg>
+          </div>
+          <h3 id="unavTitle">Camera unavailable</h3>
+          <p id="unavBody">We couldn't reach a camera on this device. You can still add a photo you already have.</p>
+        </div>
+
+        <!-- ---------- saving ---------- -->
+        <div class="progress-wrap hide" id="saving">
+          <div class="count" id="savingCount" role="status" aria-live="polite">Adding 143 of 200…</div>
+          <div class="bar"><span id="savingBar"></span></div>
+          <div class="sub">Photos already added are kept if you cancel.</div>
+        </div>
+
+        <!-- ---------- toasts ---------- -->
+        <div class="toast err hide" id="toastErr">
+          <svg viewBox="0 0 16 16"><path d="M8.982 1.566a1.13 1.13 0 0 0-1.96 0L.165 13.233c-.457.778.091 1.767.98 1.767h13.713c.889 0 1.438-.99.98-1.767zM8 5c.535 0 .954.462.9.995l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 5.995A.905.905 0 0 1 8 5m.002 6a1 1 0 1 1 0 2 1 1 0 0 1 0-2"/></svg>
+          <div><b>2 of 5 photos couldn't be added.</b><br>One was too large (over 25&nbsp;MB) and one wasn't an image. The other 3 were added.</div>
+        </div>
+        <div class="toast warn hide" id="toastWarn">
+          <svg viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14m0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16"/><path d="M8 4a.905.905 0 0 0-.9.995l.35 3.507a.552.552 0 0 0 1.1 0l.35-3.507A.905.905 0 0 0 8 4m.002 6a1 1 0 1 1 0 2 1 1 0 0 1 0-2"/></svg>
+          <div><b>You have a lot of photos waiting to upload.</b><br>Connect to the internet to free up space before adding more.</div>
+        </div>
+
+        <!-- ---------- bottom controls ---------- -->
+        <div class="sheet-bottom" id="bottom">
+          <!-- live -->
+          <div id="liveControls">
+            <div class="controls">
+              <div class="side">
+                <button class="chipbtn" id="libBtn">
+                  <svg viewBox="0 0 16 16"><path d="M14.002 13a2 2 0 0 1-2 2h-10a2 2 0 0 1-2-2V5A2 2 0 0 1 2 3a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2 2 2 0 0 1 2 2v6a2 2 0 0 1-1.998 2M14 2H4a1 1 0 0 0-1 1h9.002a2 2 0 0 1 2 2v7A1 1 0 0 0 15 11V3a1 1 0 0 0-1-1M2.002 4a1 1 0 0 0-1 1v8l2.646-2.354a.5.5 0 0 1 .63-.062l2.66 1.773 3.71-3.71a.5.5 0 0 1 .577-.094L13.002 9.5V5a1 1 0 0 0-1-1z"/></svg>
+                  Library
+                </button>
+              </div>
+              <button class="shutter" id="shutterBtn" aria-label="Take photo"></button>
+              <div class="side"></div>
+            </div>
+            <button class="oscam" id="oscamBtn">
+              <svg viewBox="0 0 16 16"><path d="M15 12a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h1.172a3 3 0 0 0 2.12-.879l.83-.828A1 1 0 0 1 6.827 3h2.344a1 1 0 0 1 .707.293l.828.828A3 3 0 0 0 12.828 5H14a1 1 0 0 1 1 1zM2 4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-1.172a2 2 0 0 1-1.414-.586l-.828-.828A2 2 0 0 0 9.172 2H6.828a2 2 0 0 0-1.414.586l-.828.828A2 2 0 0 1 3.172 4z"/><path d="M8 11a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5m0 1a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7"/></svg>
+              Use device camera
+            </button>
+          </div>
+
+          <!-- review -->
+          <div class="review-actions hide" id="reviewControls">
+            <button class="btn btn-ghost">Retake</button>
+            <button class="btn btn-primary">Use photo</button>
+          </div>
+
+          <!-- unavailable / refused -->
+          <div class="hide" id="pickerControls">
+            <button class="picker">
+              <svg viewBox="0 0 16 16"><path d="M14.002 13a2 2 0 0 1-2 2h-10a2 2 0 0 1-2-2V5A2 2 0 0 1 2 3a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2 2 2 0 0 1 2 2v6a2 2 0 0 1-1.998 2M14 2H4a1 1 0 0 0-1 1h9.002a2 2 0 0 1 2 2v7A1 1 0 0 0 15 11V3a1 1 0 0 0-1-1M2.002 4a1 1 0 0 0-1 1v8l2.646-2.354a.5.5 0 0 1 .63-.062l2.66 1.773 3.71-3.71a.5.5 0 0 1 .577-.094L13.002 9.5V5a1 1 0 0 0-1-1z"/></svg>
+              Choose existing photo
+            </button>
+            <button class="oscam" id="tryAgainBtn" style="margin-top:8px">Try again</button>
+          </div>
+
+          <!-- saving -->
+          <div class="hide" id="savingControls">
+            <button class="btn btn-ghost" style="width:100%">Cancel</button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <div class="caption panel" id="caption"></div>
+  </main>
+</div>
+
+<script>
+// ---------------------------------------------------------------------------
+// Prototype wiring. Every state below is a state in §3.1 of the spec; the
+// captions name the section each screen is illustrating.
+// ---------------------------------------------------------------------------
+const el = (id) => document.getElementById(id);
+const show = (id, on) => el(id).classList.toggle('hide', !on);
+
+let state = 'live';
+let device = 'phone';
+let feed = 'sim';
+let stream = null;
+
+const CAPTIONS = {
+  live: {
+    t: 'Live — the camera is our own, not the phone\'s',
+    p: 'The viewfinder is a <video> element inside our React UI, so this is identical on a laptop and a phone. Library sits beside the shutter — choosing an existing photo is an option <i>within</i> the camera, not an alternative to opening it. "Use device camera" is the mobile-only escape hatch to the OS camera app.',
+    tag: '§1.2, §3.1, §3.2'
+  },
+  review: {
+    t: 'Review — preview, then confirm or retake',
+    p: 'Nothing is written until "Use photo". The MVP spec asked for this step and it was never built; the hidden file input dropped every shot straight into the gallery, right or wrong.',
+    tag: '§3.1 · closes an MVP §6.2 gap'
+  },
+  unavailable: {
+    t: 'Unavailable — a state, not an error',
+    p: 'No webcam, permission denied, camera held by another tab, or an insecure origin. Every one of them still offers the file picker, so the sheet is never a dead end. The button that opens the camera is never pre-emptively disabled — we find out by asking.',
+    tag: '§3.1'
+  },
+  saving: {
+    t: 'Saving a batch — progress, and a cancel that keeps what landed',
+    p: 'Files are processed one at a time: decoding a dozen images at once will spike memory on a mid-range phone. At the 200-file cap that is 60–100 seconds, so it cannot be a frozen screen. Cancel means "stop adding more", never "undo".',
+    tag: '§5.3'
+  },
+  partial: {
+    t: 'Partial failure — the good photos still land',
+    p: 'Files are checked before being decoded: must be an image, must be under 25 MB. A bad file is skipped and reported, not fatal. Losing four good photos because the fifth was a corrupt file would be the worse outcome.',
+    tag: '§5.1, §5.3'
+  },
+  refused: {
+    t: 'Batch refused — the guard that actually matters',
+    p: 'Photos that have not uploaded yet can never be deleted: they are the only copy. That is safe one shot at a time, but not against repeated offline batches. So when the waiting pile reaches the storage budget we refuse honestly, rather than accepting a photo we cannot keep and failing later.',
+    tag: '§5.2'
+  },
+  scan: {
+    t: 'Phase 2: Scan Mode — overlays on this same viewfinder',
+    p: 'Because the feed lives in our own DOM, we can draw on it: a box tracking the garment, its label and confidence, the count ticking up live, a filmstrip of what has been captured. <b>None of this is possible through the OS camera app</b> — it gives us no frames and no surface to draw on. This is why Phase 1.05 builds a real camera.',
+    tag: 'Phase 2 · spec §9'
+  },
+  scanlow: {
+    t: 'Phase 2: low confidence — the only time it interrupts',
+    p: 'A confident detection is counted silently and the user keeps panning. Only an uncertain one stops to ask, so the scan stays fast. The dashed amber box is the "I am not sure" signal.',
+    tag: 'Phase 2 · spec §9'
+  }
+};
+
+function render() {
+  const isPhone  = device === 'phone';
+  const isScan   = state === 'scan' || state === 'scanlow';
+
+  el('device').className = 'device ' + (isPhone ? 'phone' : 'desktop');
+
+  // feed visible except when unavailable
+  show('feed',   state !== 'unavailable');
+  show('unavBg', state === 'unavailable');
+  show('frozen', state === 'review');
+
+  // top bar: flip on touch, device <select> on desktop
+  show('top', true);
+  show('flip',   isPhone && state !== 'unavailable');
+  show('devsel', !isPhone && state !== 'unavailable');
+  el('title').textContent = isScan ? 'Scanning — Shirts' : 'Shirts';
+
+  // phase 2 overlays
+  show('tally',      isScan);
+  show('filmstrip',  isScan);
+  show('pop',        state === 'scan');
+  show('scanhint',   state === 'scan');
+  show('confirmbar', state === 'scanlow');
+  // className is assigned wholesale here, so the `hide` class must be part of
+  // it — calling show('bbox', …) as well would be undone by this line.
+  el('bbox').className =
+    'bbox' + (state === 'scanlow' ? ' low' : '') + (isScan ? '' : ' hide');
+  el('bboxTag').textContent = state === 'scanlow' ? 'Shirt? · 48%' : 'Shirt · 92%';
+
+  // 1.05 states
+  show('unav',    state === 'unavailable');
+  show('saving',  state === 'saving');
+  show('toastErr',  state === 'partial');
+  show('toastWarn', state === 'refused');
+
+  // bottom controls — scan mode owns its own chrome, so the sheet bar is hidden there
+  show('bottom',          !isScan);
+  show('liveControls',    state === 'live' || state === 'partial');
+  show('reviewControls',  state === 'review');
+  show('pickerControls',  state === 'unavailable' || state === 'refused');
+  show('savingControls',  state === 'saving');
+  show('oscamBtn',        isPhone);           // desktop has no OS camera to reach (§3.2)
+
+  // caption
+  const c = CAPTIONS[state];
+  el('caption').innerHTML =
+    `<h3>${c.t}</h3><p>${c.p}</p><span class="tag ${isScan ? 'phase2' : ''}">${c.tag}</span>`;
+
+  // sidebar selection
+  document.querySelectorAll('#states button').forEach(b =>
+    b.classList.toggle('on', b.dataset.state === state));
+  document.querySelectorAll('#devseg button').forEach(b =>
+    b.classList.toggle('on', b.dataset.dev === device));
+  document.querySelectorAll('#feedseg button').forEach(b =>
+    b.classList.toggle('on', b.dataset.feed === feed));
+}
+
+// ---- real camera, if the origin allows it (§6: secure context required) ----
+async function useRealCamera() {
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } }
+    });
+    el('video').srcObject = stream;
+    show('video', true);
+    show('scene', false);
+    feed = 'real';
+  } catch (err) {
+    // The failure path IS a state in the spec — show it rather than an alert.
+    stopStream();
+    feed = 'sim';
+    state = 'unavailable';
+    el('unavTitle').textContent = 'Camera unavailable';
+    el('unavBody').textContent =
+      err && err.name === 'NotAllowedError'
+        ? 'Permission was denied. You can still add a photo you already have.'
+        : 'No camera, or this page is not on https:// or localhost. You can still add a photo you already have.';
+  }
+  render();
+}
+
+function stopStream() {
+  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+  el('video').srcObject = null;
+  show('video', false);
+  show('scene', true);
+}
+
+// ---- events ----
+document.querySelectorAll('#states button').forEach(b =>
+  b.onclick = () => { state = b.dataset.state; render(); });
+
+document.querySelectorAll('#devseg button').forEach(b =>
+  b.onclick = () => { device = b.dataset.dev; render(); });
+
+document.querySelectorAll('#feedseg button').forEach(b =>
+  b.onclick = () => {
+    if (b.dataset.feed === 'real') { useRealCamera(); }
+    else { stopStream(); feed = 'sim'; render(); }
+  });
+
+el('shutterBtn').onclick = () => { state = 'review'; render(); };
+el('libBtn').onclick     = () => { state = 'saving'; render(); };
+el('tryAgainBtn').onclick= () => { state = 'live';   render(); };
+el('oscamBtn').onclick   = () => { state = 'review'; render(); };
+document.querySelector('#reviewControls .btn-ghost').onclick   = () => { state = 'live'; render(); };
+document.querySelector('#reviewControls .btn-primary').onclick = () => { state = 'live'; render(); };
+
+// stop the camera if the tab is hidden (§6) — the same rule the real sheet follows
+document.addEventListener('visibilitychange', () => { if (document.hidden) stopStream(); });
+
+// Deep-link a single screen, so a review comment can point at one state:
+//   camera-prototype.html?state=scan&device=desktop
+const params = new URLSearchParams(location.search);
+if (CAPTIONS[params.get('state')]) state = params.get('state');
+if (params.get('device') === 'desktop') device = 'desktop';
+
+render();
+</script>
+</body>
+</html>

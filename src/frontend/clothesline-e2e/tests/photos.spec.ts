@@ -10,6 +10,12 @@ const IMAGE = fileURLToPath(new URL('./fixtures/shirt.png', import.meta.url))
 
 async function attachPhoto(page: Page): Promise<void> {
   const before = await page.getByRole('button', { name: 'Enlarge photo' }).count()
+  // Capture is now inside the CameraSheet, so the sheet has to be opened before
+  // the picker input exists (spec §8). The photo-input testid moved onto that
+  // input, so this is the only change these write-path tests need — no camera
+  // permission is granted here, so the sheet lands in Unavailable, whose
+  // "Choose existing photo" picker is the same input.
+  await page.getByRole('button', { name: 'Add photo' }).click()
   await page.getByTestId('photo-input').setInputFiles(IMAGE)
   await expect(page.getByRole('button', { name: 'Enlarge photo' })).toHaveCount(before + 1)
 }
