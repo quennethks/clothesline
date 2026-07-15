@@ -16,7 +16,14 @@ function scaleToFit(width: number, height: number): { width: number; height: num
 }
 
 export async function compressToWebP(file: Blob): Promise<Blob> {
-  const bitmap = await createImageBitmap(file)
+  // `imageOrientation: 'from-image'` removes the dependence on a browser default
+  // the browsers have historically disagreed on ('none' vs. 'from-image'). A
+  // library JPEG carrying an EXIF rotation flag would otherwise re-encode
+  // sideways, and since we re-encode, the EXIF tag is dropped so nothing
+  // downstream can rescue it. Latent while photos came from the OS camera app
+  // (already upright); reachable the moment we allow picking arbitrary library
+  // photos (spec §4.1). Canvas-grabbed camera frames are already upright.
+  const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' })
   const { width, height } = scaleToFit(bitmap.width, bitmap.height)
 
   const canvas = document.createElement('canvas')

@@ -62,6 +62,21 @@ The repo ships a **dev container** (`.devcontainer/`). Do development inside it 
 
 Backend is a modular monolith (one deployable, split internally by domain: `auth`, `domain`, `media`, `sync`). **ORM models and Alembic migrations live in the shared `clothesline_db` package** (imported by the API), not inside the domain modules — chosen for maintainability and to let a future second deployable share the schema. The `auth` module does not issue tokens; it validates Zitadel JWTs and keeps a minimal `User {id, sub, email}` mirror (email is the only PII stored). Frontend Vitest unit tests are colocated in `clothesline-web`; Playwright e2e is its own project so it can drive the built PWA including offline flows.
 
+## Specs are append-only — annotate, don't rewrite
+
+A spec records *the decision that was made*, and that stays true even once it's been overtaken. So when a later spec overrides an earlier one, **do not edit the earlier spec's text.** Rewriting it in place destroys the trail: a reader can no longer tell whether the section always said that, or whether someone quietly changed it because reality disagreed.
+
+Instead:
+
+1. **Annotate in place.** Immediately above the superseded passage, add a dated callout naming what changed in one line and linking to the **exact section** that overrides it:
+   > ⚠️ **Superseded — <date>, by [Phase X §N "<heading>"](<relative-link>#anchor).** <One line on what changed and why.> The <passage> is left unchanged below as the original decision.
+2. **Index it.** Add a row to the **"Amendments to this spec"** table under the document header, so a reader sees at a glance what has moved on without scrolling the whole document. (See [`specs/01-mvp/technical-implementation-spec.md`](./specs/01-mvp/technical-implementation-spec.md) for the shape of both.)
+3. **Make the trail two-way.** The *new* spec carries a **Supersessions** section declaring what it overrides, so the story is readable from either end.
+
+**Supersede reversed *decisions*, not everything.** This convention earns its keep only while the callouts stay rare and coarse. A typo, a clarification, or a passage that is merely *adjacent* to the change gets no banner — annotate the section where a decision actually flipped, and say explicitly in the new spec's Supersessions section what you chose **not** to annotate, and why. A spec thicketed with banners is less readable than one that was never annotated at all.
+
+> Links point at Markdown heading anchors and nothing verifies them — rename a heading and the trail rots silently. Keep headings stable once they've been linked.
+
 ## Diagrams
 
 - **Prefer Mermaid for all diagrams** — architecture, flows, sequences, state machines, ER diagrams, etc. Use Mermaid as much as possible so diagrams stay version-controlled, diffable, and render inline in Markdown.

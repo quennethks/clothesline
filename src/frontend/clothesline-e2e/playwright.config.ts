@@ -26,6 +26,23 @@ export default defineConfig({
     // Zitadel and the web app are served over the AppHost's dev certs.
     ignoreHTTPSErrors: true,
     permissions: [],
+    // A synthetic camera, so getUserMedia resolves headlessly with no hardware.
+    // BOTH flags are required on this Chromium build: --use-fake-device alone
+    // throws NotSupportedError; only --use-fake-ui activates the fake capture
+    // pipeline. --use-fake-ui also auto-accepts the permission (it ignores
+    // Playwright's permissions:[]), so permission-based denial can't be
+    // expressed — camera.spec.ts's denied case instead stubs getUserMedia to
+    // reject, which drives the same useCamera catch → Unavailable path (spec §8).
+    // --disable-dev-shm-usage: containers often mount a tiny (64MB) /dev/shm,
+    // which Chromium exhausts and the renderer crashes ("page crashed"); this
+    // moves its shared memory to /tmp. Harmless on a well-provisioned host.
+    launchOptions: {
+      args: [
+        '--use-fake-device-for-media-stream',
+        '--use-fake-ui-for-media-stream',
+        '--disable-dev-shm-usage',
+      ],
+    },
   },
   projects: [
     {
@@ -36,11 +53,13 @@ export default defineConfig({
       testIgnore: /responsive\.spec\.ts/,
     },
     {
-      // The desktop-layout assertions (spec §6.5) are only meaningful at a
-      // desktop viewport, so that spec runs here and only here.
+      // The desktop-layout assertions (spec §6.5) run here and only here — plus
+      // camera.spec.ts, because the camera's whole premise is that desktop and
+      // mobile behave alike, so it must be exercised on *both* projects. Without
+      // widening this, a new spec would silently run on mobile only (spec §8).
       name: 'desktop-chromium',
       use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 900 } },
-      testMatch: /responsive\.spec\.ts/,
+      testMatch: /(responsive|camera)\.spec\.ts/,
     },
   ],
 })
