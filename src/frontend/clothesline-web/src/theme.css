@@ -576,10 +576,12 @@ i.bi svg {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* Below ~400px the name, stepper and tools stop fitting on one line — the
-   stepper keeps its full size and the tools drop under the name rather than
-   the tap targets shrinking. */
-@media (max-width: 400px) {
+/* The row carries a name, the stepper, and three tools (take-photo, gallery,
+   remove). That no longer fits on one line at phone widths (it needs ~440px of
+   viewport), so below 480px the name takes its own line and the stepper + tools
+   sit beneath it — the tap targets keep full size rather than the name
+   truncating to an ambiguous "Tro…". Tablets/desktop stay single-row. */
+@media (max-width: 480px) {
   .item-row {
     flex-wrap: wrap;
   }
