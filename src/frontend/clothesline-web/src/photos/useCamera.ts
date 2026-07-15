@@ -57,6 +57,8 @@ function reasonFor(error: unknown): UnavailableReason {
     case 'NotReadableError':
     case 'TrackStartError':
       return 'in-use'
+    case 'NotSupportedError':
+      return 'unsupported'
     default:
       return 'unknown'
   }

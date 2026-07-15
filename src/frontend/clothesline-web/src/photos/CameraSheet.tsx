@@ -113,7 +113,7 @@ export function CameraSheet({ loadId, categoryId, title, onClose }: CameraSheetP
       if (event.key !== 'Tab' || !node) return
       const focusable = Array.from(
         node.querySelectorAll<HTMLElement>(
-          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+          'button, [href], input:not([type="file"]), select, textarea, [tabindex]:not([tabindex="-1"])',
         ),
       ).filter((el) => !el.hasAttribute('disabled') && el.offsetParent !== null)
       if (focusable.length === 0) return
@@ -151,8 +151,10 @@ export function CameraSheet({ loadId, categoryId, title, onClose }: CameraSheetP
   }, [phase])
 
   const writeOne = useCallback(
-    (file: Blob) =>
-      categoryId ? capturePhotoForCategory(db, categoryId, file) : capturePhotoForLoad(db, loadId, file),
+    (file: Blob) => {
+      if (!db) throw new Error('database is not ready')
+      return categoryId ? capturePhotoForCategory(db, categoryId, file) : capturePhotoForLoad(db, loadId, file)
+    },
     [db, categoryId, loadId],
   )
 
