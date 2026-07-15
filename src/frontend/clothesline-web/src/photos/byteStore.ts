@@ -10,7 +10,14 @@ const STORE = 'bytes'
 
 // Budget for *uploaded* bytes only. Un-uploaded bytes are the only copy in
 // existence and are never counted against it or evicted (spec §8.3).
-const CACHE_BUDGET_BYTES = 150 * 1024 * 1024
+export const CACHE_BUDGET_BYTES = 150 * 1024 * 1024
+
+// The bound on the *un-uploaded* pile, which the cache budget above does not
+// guard (spec §5.2). It must stay **below** CACHE_BUDGET_BYTES: trimCache sums
+// every entry but evicts only uploaded ones, so a pending pile near 150MB makes
+// it evict the entire offline cache and still finish over budget. 100MB leaves
+// ~50MB of headroom in which the uploaded cache can still exist.
+export const PENDING_BUDGET_BYTES = 100 * 1024 * 1024
 
 export interface StoredBytes {
   photo_id: string
@@ -63,6 +70,18 @@ export async function getBytes(photoId: string): Promise<Blob | undefined> {
   if (!entry) return undefined
   await run('readwrite', (store) => store.put({ ...entry, last_viewed_at: Date.now() }))
   return entry.blob
+}
+
+/**
+ * Total bytes of entries not yet drained to Blob — the un-uploaded pile the
+ * batch guard checks against PENDING_BUDGET_BYTES (spec §5.2). The `uploaded`
+ * flag is already stored per entry, so this is a getAll + filter + sum.
+ */
+export async function pendingBytes(): Promise<number> {
+  const entries = await run<StoredBytes[]>('readonly', (store) => store.getAll())
+  return entries
+    .filter((entry) => !entry.uploaded)
+    .reduce((sum, entry) => sum + entry.blob.size, 0)
 }
 
 export async function markUploaded(photoId: string): Promise<void> {
