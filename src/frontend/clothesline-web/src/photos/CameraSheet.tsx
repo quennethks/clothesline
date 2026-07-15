@@ -468,7 +468,10 @@ export function CameraSheet({ loadId, categoryId, title, onClose }: CameraSheetP
           accept="image/*"
           capture="environment"
           className="visually-hidden"
-          aria-label="Use device camera"
+          // Distinct from the visible "Use device camera" button that triggers
+          // it — two controls sharing an accessible name is an a11y smell (and
+          // makes the button ambiguous to query).
+          aria-label="Take photo with device camera"
           onChange={onInputChange}
         />
       )}
