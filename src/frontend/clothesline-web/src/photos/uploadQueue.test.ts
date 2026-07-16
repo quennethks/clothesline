@@ -109,9 +109,10 @@ describe('uploadQueue', () => {
     expect((await db.photos.findOne(photoId).exec())?.local_only).toBe(true)
   })
 
-  it('clears a stale local_only flag when this device holds no bytes', async () => {
-    // A photos doc that replicated in from another device before that device
-    // drained its own queue — nothing here to upload, so it must not spin.
+  it('soft-deletes a local_only photo whose bytes are gone', async () => {
+    // `local_only` + no bytes can only mean this device captured it and the
+    // browser evicted the only copy. It can never be uploaded and no other
+    // device can supply it, so it must not linger as forever-pending.
     const photoId = newId()
     await captureCategoryPhoto(db, categoryId, photoId, 'image/webp')
 
@@ -119,6 +120,52 @@ describe('uploadQueue', () => {
     await settle()
 
     expect(requestUploadUrl).not.toHaveBeenCalled()
-    expect((await db.photos.findOne(photoId).exec())?.local_only).toBe(false)
+    expect(await db.photos.findOne(photoId).exec()).toBeNull()
+  })
+
+  it('takes the orphaned photo out of the pending set rather than retrying it', async () => {
+    const photoId = newId()
+    await captureCategoryPhoto(db, categoryId, photoId, 'image/webp')
+
+    stop = startUploadQueue(db, () => 'token')
+    await settle()
+
+    // The whole point of the old flag-clear: it must not spin. A soft-deleted
+    // doc drops out of the drain selector, so the queue has nothing pending.
+    expect(await db.photos.find({ selector: { local_only: true } }).exec()).toHaveLength(0)
+  })
+
+  it('drops the auto-created LoadItem and decrements the category count', async () => {
+    const photoId = newId()
+    const loadItemId = await captureCategoryPhoto(db, categoryId, photoId, 'image/webp')
+    expect((await db.load_item_categories.findOne(categoryId).exec())?.count_sent).toBe(1)
+
+    stop = startUploadQueue(db, () => 'token')
+    await settle()
+
+    // The item's only evidence was the photo, so it goes too (spec §4.4) —
+    // otherwise the count would keep claiming a piece nobody can show.
+    expect(await db.load_items.findOne(loadItemId).exec()).toBeNull()
+    expect((await db.load_item_categories.findOne(categoryId).exec())?.count_sent).toBe(0)
+  })
+
+  it('leaves an uploadable photo untouched while orphaning the byteless one', async () => {
+    const orphanId = newId()
+    await captureCategoryPhoto(db, categoryId, orphanId, 'image/webp')
+    const goodId = await capture()
+    requestUploadUrl.mockResolvedValue({
+      blob_key: `user-1/${goodId}`,
+      upload_url: 'https://blob.test/put',
+      expires_at: '2026-01-01T00:00:00Z',
+    })
+    putBlobBytes.mockResolvedValue(undefined)
+
+    stop = startUploadQueue(db, () => 'token')
+    await settle()
+
+    expect(await db.photos.findOne(orphanId).exec()).toBeNull()
+    const good = await db.photos.findOne(goodId).exec()
+    expect(good?.blob_key).toBe(`user-1/${goodId}`)
+    expect(good?.local_only).toBe(false)
   })
 })

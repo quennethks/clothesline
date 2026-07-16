@@ -1,6 +1,7 @@
 import type { ClotheslineDatabase } from '../db'
 import { nowIso } from '../domain/shared'
 import { getBytes, markUploaded } from './byteStore'
+import { removePhoto } from './capture'
 import { putBlobBytes, requestUploadUrl } from './mediaApi'
 import { PHOTO_CONTENT_TYPE } from './compress'
 
@@ -31,13 +32,21 @@ export function startUploadQueue(
   async function uploadOne(photoId: string, contentType: string): Promise<void> {
     const bytes = await getBytes(photoId)
     if (!bytes) {
-      // A `local_only` doc with no bytes on this device can only be a doc
-      // that replicated in from another device before that device drained
-      // its own queue (its `local_only` doesn't travel — spec §8.1 — but a
-      // stale local flag could otherwise spin here forever). Nothing to
-      // upload; let the other device's queue do it.
-      const photo = await db.photos.findOne(photoId).exec()
-      await photo?.incrementalPatch({ local_only: false })
+      // `local_only` means *this* device captured it and is the only place the
+      // bytes ever existed — a doc that replicated in arrives `local_only:
+      // false` (the flag never travels, and the pull modifier defaults it), so
+      // it never reaches here. Missing bytes therefore aren't "not yet mine to
+      // upload"; they're gone — evicted by the browser under storage pressure,
+      // most often on a phone. There is nothing left to upload and no other
+      // copy to fetch, so the photo is unrecoverable rather than pending.
+      //
+      // Clearing `local_only` instead would strand it: it would drop out of the
+      // drain query forever with a null `blob_key`, leaving every other device
+      // showing "Waiting to upload" for bytes that are never coming, while this
+      // one reported "Synced". Soft-delete it so the loss replicates honestly —
+      // this also drops the auto-created LoadItem and decrements the category's
+      // count, since that item's only evidence was the photo (spec §4.4).
+      await removePhoto(db, photoId)
       return
     }
 
