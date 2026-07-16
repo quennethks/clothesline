@@ -84,6 +84,7 @@ Instead:
 
 ## Conventions
 
+- **Commits follow [Conventional Commits](https://www.conventionalcommits.org) — strictly.** Every commit message is `type(scope): summary`, where `type` is one of `feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `build`, `ci`, `perf`, `style`, `revert`. Use a scope where it clarifies (`feat(web):`, `fix(api):`, `ci(deploy):`); mark a breaking change with `!` after the type/scope (`feat(api)!:`) or a `BREAKING CHANGE:` footer. This is not optional — the existing history (`feat(web):`, `fix(web):`) already follows it, and it must stay consistent.
 - **Dependencies:** backend uses `uv` (`uv add`, `uv run`) with `pyproject.toml` — do not use bare `pip`. Frontend uses the Vite/npm toolchain.
 - **Offline-first is a hard requirement:** create-load, itemize, mark-sent, and enter-received-count must work with no network. The client (**RxDB over IndexedDB**) is the system of record during a session; **RxDB replication** syncs to the API's generic `/sync/{collection}` endpoint when online. Loads/items have **no REST CRUD** — send/receive/reconcile/duplicate are local RxDB writes, validated server-side at push time. Don't add a server round-trip to the core counter flow.
 - **Playwright:** Chromium is pre-installed at `/opt/pw-browsers/chromium`. Do **not** run `playwright install`.

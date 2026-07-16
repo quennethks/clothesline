@@ -103,6 +103,10 @@ Running the deploy from CI instead of your own shell? **[`ops/GITHUB-ACTIONS-SET
         └── clothesline-e2e/   Playwright e2e tests
 ```
 
+## Contributing
+
+Commit messages **strictly follow [Conventional Commits](https://www.conventionalcommits.org)**: `type(scope): summary`, where `type` is one of `feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `build`, `ci`, `perf`, `style`, or `revert`. Use a scope where it helps (`feat(web):`, `fix(api):`) and mark breaking changes with `!` (`feat(api)!:`) or a `BREAKING CHANGE:` footer.
+
 ## Documentation
 
 - [`business/`](./business) — problem statement, market research, competitive analysis, and product requirements
