@@ -21,9 +21,15 @@ class LoadValidator:
     ) -> None:
         if existing is not None and existing.user_id != user_id:
             raise PushValidationError("not your load")
-        incoming_user_id = incoming.get("user_id")
-        if incoming_user_id is not None and incoming_user_id != user_id:
-            raise PushValidationError("cannot assign a load to another user")
+
+        # There is deliberately no check on an incoming `user_id`: it is this
+        # collection's server-authored `owner_field`, so the push path drops
+        # the client's value and stamps the principal instead — leaving nothing
+        # to disagree with. The check that stood here rejected a load whose
+        # stamped owner didn't match the caller, and no retry could ever clear
+        # it, because the value was already baked into a stored document. That
+        # made a single database reset (which mints a new `users.id` for the
+        # same Zitadel `sub`) strand every load a device was holding.
 
         if existing is None:
             return

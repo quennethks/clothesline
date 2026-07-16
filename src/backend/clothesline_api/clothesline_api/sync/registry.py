@@ -34,6 +34,21 @@ class SyncCollection:
     validator: object  # implements domain.common.PushValidator
     owner_filter: Callable[[Select[Any], uuid.UUID], Select[Any]]
     parsers: dict[str, Callable[[object], object]] = field(default_factory=dict)
+    # The column holding the owning user's id. Server-authored: it is in
+    # `fields` so pulls still return it, but the push path never lets a client
+    # write it — the server stamps it from the authenticated principal, which
+    # it resolves from the Zitadel `sub` on every request anyway.
+    #
+    # The client used to send this, which made it the one field where the
+    # client asserted an identity the server already owned. `users.id` is a
+    # uuid4 minted per row, so recreating the users row (any database reset)
+    # renumbered the user and instantly invalidated every load a device had
+    # already stamped — unfixable by retry, because the value can never match
+    # again. A value the client cannot write is a value that cannot go stale.
+    #
+    # Only `loads` stores the owner directly; every other collection derives
+    # ownership through its parent (see `owner_filter`).
+    owner_field: str | None = None
 
 
 REGISTRY: dict[str, SyncCollection] = {
@@ -53,7 +68,10 @@ REGISTRY: dict[str, SyncCollection] = {
         ),
         validator=LoadValidator(),
         owner_filter=domain_common.loads_owner_filter,
-        parsers={"user_id": _uuid, "send_date": _date_or_none},
+        # No `user_id` parser: it is owner_field, so the push path drops the
+        # client's value before parsing and the server stamps a real UUID.
+        parsers={"send_date": _date_or_none},
+        owner_field="user_id",
     ),
     "load_item_categories": SyncCollection(
         name="load_item_categories",

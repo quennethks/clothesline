@@ -28,10 +28,18 @@ def _replicated_content(
     timestamps, not the server's. Comparing those would make the second write
     to every document a false conflict, which RxDB resolves by dropping the
     local change (default handler: master wins).
+
+    `owner_field` is excluded for exactly the same reason — it too is
+    server-authored, so the client's assumed master state carries whatever
+    owner id that device last stamped, not the one the server holds.
     """
     if doc is None:
         return None
-    return {key: doc.get(key) for key in ("id", *collection.fields, "_deleted")}
+    return {
+        key: doc.get(key)
+        for key in ("id", *collection.fields, "_deleted")
+        if key != collection.owner_field
+    }
 
 
 async def handle_push(
@@ -82,19 +90,31 @@ async def _apply_one(
     # Idempotent upsert-by-id (spec §5.2): if the server's current state
     # doesn't match what the client assumed, don't apply — return the
     # current master doc as a conflict so RxDB resolves it on the client.
+    #
+    # Only meaningful when a master row actually exists. With no row there is
+    # nothing to conflict *with*: a client assuming otherwise is holding the
+    # only surviving copy (the server lost it — rows here are soft-deleted, so
+    # "absent" never means "deleted"), and the honest resolution is to accept
+    # its create. Reporting a conflict instead would hand back a null master,
+    # which is not a document RxDB can resolve against.
     current_wire = row_to_wire(existing, collection.fields) if existing is not None else None
-    if _replicated_content(current_wire, collection) != _replicated_content(
+    is_stale = _replicated_content(current_wire, collection) != _replicated_content(
         assumed_master_state, collection
-    ):
+    )
+    if existing is not None and is_stale:
         return current_wire
 
     def _identity(value: object) -> object:
         return value
 
+    # `owner_field` is skipped: the client's value is not read, not parsed and
+    # not written. On a create the server stamps it from the principal below;
+    # on an update it is simply never reassignable, so a push can't move a
+    # document between users.
     incoming_fields = {
         field_name: collection.parsers.get(field_name, _identity)(new_state.get(field_name))
         for field_name in collection.fields
-        if field_name in new_state
+        if field_name in new_state and field_name != collection.owner_field
     }
 
     try:
@@ -110,6 +130,11 @@ async def _apply_one(
 
     if existing is None:
         instance = collection.model(id=doc_id, **incoming_fields)  # type: ignore[call-arg]
+        if collection.owner_field is not None:
+            # The one authority on who owns this row: the principal resolved
+            # from this request's JWT. The column is NOT NULL, so this is also
+            # what makes the create valid at all.
+            setattr(instance, collection.owner_field, user_id)
         if deleted:
             instance.deleted_at = datetime.now(UTC)
         session.add(instance)
