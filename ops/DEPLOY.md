@@ -18,6 +18,11 @@
 > [Known issues](#known-issues-look-here-first). Read that section before changing
 > anything there — several of the settings look arbitrary and are not.
 
+> **Deploying from GitHub Actions rather than your own shell?** First wire the
+> GitHub→Azure trust (federated credential, RBAC, repo secrets/variables) —
+> see [`GITHUB-ACTIONS-SETUP.md`](./GITHUB-ACTIONS-SETUP.md). That doc hands back here
+> for the domain-binding and post-deploy steps below.
+
 ## Prerequisites
 
 | | |

@@ -79,6 +79,8 @@ aspire destroy -e Staging       # tear down
 
 **[`ops/DEPLOY.md`](./ops/DEPLOY.md) is the runbook** — prerequisites, the custom-domain binding, migrations, the OIDC bootstrap, smoke checks and the known issues. Read it before your first deploy: `aspire deploy` alone does *not* run migrations or register the OIDC app, and the identity domain must be settled up front.
 
+Running the deploy from CI instead of your own shell? **[`ops/GITHUB-ACTIONS-SETUP.md`](./ops/GITHUB-ACTIONS-SETUP.md)** covers the one-time GitHub→Azure wiring — the federated (OIDC) credential, RBAC, and the repo secrets/variables the workflow needs.
+
 > The deploy path has never been run against a real subscription. Treat the first one as an experiment.
 
 ## Project structure
