@@ -16,7 +16,7 @@ import { useSyncStatus } from './useSyncStatus'
 // Mounted once, always on. Rendering the badge somewhere it isn't always
 // present must not stop replication — hence the engine is here, not in the badge.
 
-export type SyncState = 'idle' | 'active' | 'error' | 'offline'
+export type SyncState = 'idle' | 'active' | 'uploading' | 'error' | 'offline'
 
 interface SyncValue {
   status: SyncState
@@ -29,6 +29,8 @@ function labelFor(status: SyncState): string {
       return 'Offline — changes saved'
     case 'active':
       return 'Syncing…'
+    case 'uploading':
+      return 'Uploading photos…'
     case 'error':
       return 'Sync error — will retry'
     default:
@@ -67,13 +69,38 @@ export function SyncProvider({ children }: { children: ReactNode }) {
     }
   }, [db])
 
+  // Photo *documents* replicate, but the image *bytes* upload on a separate
+  // path (photos/uploadQueue.ts): a photo is `local_only` until this device has
+  // PUT its bytes to Blob and written back `blob_key`. Replication can be fully
+  // caught up while bytes are still pending — so the badge must count these, or
+  // it reads "Synced" while the other device only sees "Waiting to upload".
+  const [pendingUploads, setPendingUploads] = useState(0)
+  useEffect(() => {
+    if (!db) return
+    const sub = db.photos
+      .count({ selector: { local_only: true } })
+      .$.subscribe((count) => setPendingUploads(count))
+    return () => sub.unsubscribe()
+  }, [db])
+
   const replicationStatus = useSyncStatus(replicationStates)
   const online = useOnline()
 
   // Offline is expected, not broken (spec §6.4) — and while offline every
   // replication attempt errors, so it would otherwise read "Sync error" for the
-  // entire time the app is doing exactly what it's designed to do.
-  const status: SyncState = online ? replicationStatus : 'offline'
+  // entire time the app is doing exactly what it's designed to do. When online
+  // and replication is quiet, outstanding photo bytes still keep us out of
+  // "Synced" — the upload queue settles them within a poll interval, either by
+  // uploading the bytes or by removing a photo whose bytes are gone.
+  const status: SyncState = !online
+    ? 'offline'
+    : replicationStatus === 'error'
+      ? 'error'
+      : replicationStatus === 'active'
+        ? 'active'
+        : pendingUploads > 0
+          ? 'uploading'
+          : 'idle'
 
   return (
     <SyncContext.Provider value={{ status, label: labelFor(status) }}>

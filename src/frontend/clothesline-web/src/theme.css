@@ -1017,10 +1017,12 @@ i.bi svg {
   background: currentcolor;
   flex: 0 0 auto;
 }
-.sync-status[data-status='active'] {
+.sync-status[data-status='active'],
+.sync-status[data-status='uploading'] {
   color: var(--accent-text);
 }
-.sync-status[data-status='active'] .sync-dot {
+.sync-status[data-status='active'] .sync-dot,
+.sync-status[data-status='uploading'] .sync-dot {
   animation: sync-blink 1s ease-in-out infinite;
 }
 .sync-status[data-status='error'] {
@@ -1035,7 +1037,8 @@ i.bi svg {
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .sync-status[data-status='active'] .sync-dot {
+  .sync-status[data-status='active'] .sync-dot,
+  .sync-status[data-status='uploading'] .sync-dot {
     animation: none;
   }
 }
@@ -1411,6 +1414,55 @@ i.bi svg {
   line-height: 1.25;
   text-align: center;
   background: var(--surface-2);
+}
+
+/* A photo whose bytes are on this device but not yet in Blob (spec §8.2): the
+   image shows, with a badge so the capturing device can tell it's still going
+   up and isn't visible on other devices yet. */
+.photo-uploading {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.photo-uploading.photo-full {
+  flex: 1;
+  min-height: 0;
+}
+.photo-uploading img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.photo-uploading.photo-full img {
+  object-fit: contain;
+}
+.photo-uploading-badge {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  color: #fff;
+  background: rgb(0 0 0 / 55%);
+  font-size: 12px;
+}
+.photo-uploading-badge svg {
+  animation: sync-spin 1.4s linear infinite;
+}
+@keyframes sync-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .photo-uploading-badge svg {
+    animation: none;
+  }
 }
 
 .photo-lightbox {

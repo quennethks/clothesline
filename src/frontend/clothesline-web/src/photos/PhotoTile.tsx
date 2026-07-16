@@ -17,6 +17,20 @@ export function PhotoImage({
   const { url, state } = usePhotoBytes(photoId, blobKey)
 
   if (state === 'ready' && url) {
+    // Bytes are on this device but `blob_key` is still null: this is the
+    // capturing device and its upload queue hasn't drained yet. The image
+    // shows, but other devices can't see it until the bytes reach Blob — so
+    // flag that it's still going up rather than looking done (spec §8.2).
+    if (!blobKey) {
+      return (
+        <span className={className ? `${className} photo-uploading` : 'photo-uploading'}>
+          <img src={url} alt={alt} />
+          <span className="photo-uploading-badge" aria-label="Uploading" title="Uploading…">
+            <Icon name="arrow-repeat" />
+          </span>
+        </span>
+      )
+    }
     return <img className={className} src={url} alt={alt} />
   }
 
