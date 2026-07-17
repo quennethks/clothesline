@@ -12,7 +12,6 @@ from azure.identity import DefaultAzureCredential
 from azure.storage.blob import (
     BlobSasPermissions,
     BlobServiceClient,
-    CorsRule,
     generate_blob_sas,
 )
 
@@ -114,23 +113,16 @@ def read_sas_url(blob_key: str) -> tuple[str, datetime.datetime]:
 
 
 def ensure_container() -> None:
-    """Create the private photo container and allow the web app's origin to
-    PUT/GET bytes cross-origin (the browser talks to Blob directly, so the
-    storage account — not the API — is what must permit it)."""
+    """Create the private photo container if it doesn't exist yet.
+
+    CORS is deliberately *not* set here. The browser PUTs/GETs bytes directly to
+    Blob, so the account must allow the web origin cross-origin — but "Set Blob
+    Service Properties" (which configures CORS) is authorized only by account key
+    or account SAS, never by Microsoft Entra, and the deployed account disables
+    shared-key access. So CORS is provisioned in the Aspire AppHost (bicep)
+    instead; see the storage.ConfigureInfrastructure block there.
+    """
     client = _blob_service_client()
     container = client.get_container_client(settings.blob_container)
     if not container.exists():
         container.create_container()  # private by default — no public access
-
-    origins = settings.allowed_origins_list or ["*"]
-    client.set_service_properties(
-        cors=[
-            CorsRule(
-                allowed_origins=origins,
-                allowed_methods=["GET", "PUT", "HEAD", "OPTIONS"],
-                allowed_headers=["*"],
-                exposed_headers=["*"],
-                max_age_in_seconds=3600,
-            )
-        ]
-    )

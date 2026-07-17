@@ -720,6 +720,46 @@ if (builder.ExecutionContext.IsPublishMode)
     var identityEnv = builder.AddAzureContainerAppEnvironment("identity-env");
     var appEnv = builder.AddAzureContainerAppEnvironment("app-env");
 
+    // Blob CORS must be provisioned here, not set by the API at runtime.
+    // The browser PUTs/GETs photo bytes straight to Blob via SAS URLs (spec
+    // §8.2), so the storage account has to allow the web app cross-origin. The
+    // API used to configure this on startup via set_service_properties, but that
+    // "Set Blob Service Properties" operation is authorized *only* by account key
+    // or account SAS — never by Microsoft Entra — and this account sets
+    // allowSharedKeyAccess=false, so the runtime call can never succeed. CORS is
+    // a management-plane property though, which is exactly what this bicep is, so
+    // it belongs here.
+    //
+    // allowedOrigins is "*" rather than the web app's exact origin because the
+    // storage module is emitted before the app-env, so the ACA-generated web
+    // FQDN isn't available to thread in as a parameter (it resolves to empty).
+    // This is safe: CORS is not an authorization mechanism — every blob request
+    // is gated by a short-lived, user-scoped SAS token carried in the URL, and
+    // no ambient credentials (cookies) are involved, so a wildcard origin grants
+    // no read/write access on its own. The live deployment is additionally
+    // scoped to the exact origin (set out-of-band); this "*" is the from-scratch
+    // safety net so a fresh redeploy still has working photo uploads.
+    storage.ConfigureInfrastructure(infra =>
+    {
+        var account = infra.GetProvisionableResources().OfType<StorageAccount>().First();
+        var blobService = new BlobService("blobService") { Parent = account };
+        blobService.CorsRules.Add(new StorageCorsRule
+        {
+            AllowedOrigins = { "*" },
+            AllowedMethods =
+            {
+                CorsRuleAllowedMethod.Get,
+                CorsRuleAllowedMethod.Put,
+                CorsRuleAllowedMethod.Head,
+                CorsRuleAllowedMethod.Options,
+            },
+            AllowedHeaders = { "*" },
+            ExposedHeaders = { "*" },
+            MaxAgeInSeconds = 3600,
+        });
+        infra.Add(blobService);
+    });
+
     // Force the three identity apps onto ONE Azure Files share.
     //
     // WithVolume("zitadel-machinekeys", ...) is declared identically on zitadel,
