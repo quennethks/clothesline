@@ -337,12 +337,24 @@ az containerapp update -g "$rg" -n clothesline-api --revision-suffix "bootstrapp
 curl -fsS https://id.example.com/debug/healthz                  # Zitadel is up
 curl -fsS "$api/health"  | grep -q '"db":"ok"'                  # API ↔ Postgres
 curl -fsS "$api/config"  | grep -q '"oidc_client_id":"[0-9]'    # step 5 actually ran
+curl -fsS https://id.example.com/ui/console/assets/environment.json \
+  | grep -q '"api":"https://id.example.com"'                    # admin console can reach its own API
 ```
 
 That third check is the one people forget — a non-empty `oidc_client_id` is the only
 proof the bootstrap job completed. If it's empty, the web app cannot sign anyone in.
 
-Then open the web app and sign in for real.
+The fourth guards a failure that **looks like nothing is wrong**: `/ui/console` returns
+`200` and the page renders, but the console is told to call its API at an ACA-*internal*
+hostname no browser can resolve, so every action inside it fails. `api` must be the
+public identity origin over `https`. If it is anything else — most tellingly
+`http://zitadel.internal.…` — see
+[`specs/01-mvp/fixes/2026-07-17-zitadel-admin-console.md`](../specs/01-mvp/fixes/2026-07-17-zitadel-admin-console.md);
+it means either Zitadel lost `--tlsMode external` or `identity-proxy`'s rewrite rule
+stopped matching.
+
+Then open the web app and sign in for real, and open `https://id.example.com/ui/console`
+with devtools open — zero failed API calls is the real proof.
 
 ## Teardown
 
@@ -397,6 +409,85 @@ you might be tempted to "clean up", and every one of them is load-bearing.
    `x-zitadel-forward-host`, so `Host` stays ACA's and the instance is named out of
    band. The Caddyfile and the bootstrap script send that header; publish-only, since
    locally there is no ingress in the way.
+
+0d. **The admin console does not honour the header from 0c — its origin is rewritten
+   in the proxy instead.** Zitadel builds the console's own API URL as
+   `BuildOrigin(r.Host, externalSecure)` — the raw `Host` and nothing else, ignoring
+   `x-zitadel-forward-host`, `X-Forwarded-Host` and `DomainContext`. So 0c's escape
+   hatch doesn't reach it: it writes down the ACA-internal hostname, which no browser
+   can resolve, and `/ui/console` then loads but cannot make a single API call. There
+   is no config knob for it and upstream `main` is unchanged, so `identity-proxy`
+   rebuilds Caddy with the `replace-response` plugin and rewrites that one file
+   (`/ui/console/assets/environment.json`) on the way out. The rule is a no-op
+   locally by construction. Two things it depends on, neither obvious:
+   `--tlsMode` and `ZITADEL_FORWARDED_PROTO` must stay keyed off the same condition
+   (or the search string stops matching), and `header_up Accept-Encoding identity` is
+   required because the plugin cannot rewrite a **compressed** body and fails silently
+   if it meets one. See
+   [`specs/01-mvp/fixes/2026-07-17-zitadel-admin-console.md`](../specs/01-mvp/fixes/2026-07-17-zitadel-admin-console.md).
+
+0e. **Zitadel must start with `--tlsMode external`, and `ZITADEL_EXTERNALSECURE` must
+   NOT be set.** They contradict, and the flag wins silently: `ModeFromFlag` does
+   `viper.Set("externalSecure", …)`, which outranks env vars. `--tlsMode disabled`
+   therefore forced `externalSecure=false` behind an HTTPS ingress, which is what
+   broke 0d and also left session cookies without `Secure`. It hid for months because
+   the OIDC issuer comes from a different path (`IssuerFromRequest` → `DomainContext`)
+   that honours `X-Forwarded-Proto`, so sign-in worked and only the console showed the
+   real value. `external` is what spec §5.6(b) always prescribed. Re-adding
+   `ZITADEL_EXTERNALSECURE` would look authoritative and do nothing.
+
+0f. **The OIDC bootstrap job must also send `X-Forwarded-Proto` — 0e's fix broke it
+   until this was added.** The job calls Zitadel directly (0b2's direct-gRPC pattern,
+   same reasoning for REST), so unlike a browser or `identity-proxy` it never sent
+   this header on its own. Zitadel treats an absent header as `http`; once 0e made
+   `externalSecure=true`, that mismatch made every Management API call — including
+   the admin PAT itself — fail with `401`. `bootstrap_oidc_app.py` now sends
+   `X-Forwarded-Proto` from `ZITADEL_FORWARDED_PROTO`, forced by `apphost.cs` to the
+   same `(isPublish || isCodespaces)` condition as everywhere else this scheme is
+   decided. If this job ever 401s again, check this before anything else — it looks
+   identical to 0g below in the job's own logs (both are "the admin PAT doesn't
+   work"), but Zitadel's *own* logs distinguish them: `Errors.Token.Invalid` +
+   `AUTH-7fs1e` with a normally-resolved `instance_id` is this one; a decrypt error
+   (`CRYPT-OhN2u`/`CRYPT-Eep6o`, "illegal base64 data") on the same token is 0g.
+
+0g. **Running `aspire deploy` from a different checkout path than the one that
+   first created the identity environment silently mints a new `zitadel-masterkey`
+   and pushes it live — breaking every PAT and signing key Zitadel had already
+   encrypted with the old one.** `zitadel-masterkey` and `pg-password` are both
+   `AddParameter(..., persist: true)` — reused across deploys, *not* regenerated
+   — but the persisted value lives in a **local file**,
+   `~/.aspire/deployments/<hash>/<environment>.json`, keyed by a hash that (near as
+   this was diagnosed) is sensitive to the AppHost's checkout path. Deploying from a
+   second `git worktree` of this repo resolves to a *different* hash than the
+   checkout that ran the first deploy, `persist: true` finds nothing there, and
+   Aspire generates a fresh key — silently, with no warning, and no diff against
+   the *other* checkout's persisted value to catch it.
+   `pg-password` rotating this way is harmless — Aspire's Postgres provisioning
+   updates the server's actual password to match on every deploy, so both sides
+   move together. `zitadel-masterkey` is not applied to anything external; it only
+   decrypts what Zitadel already wrote to its database under the *old* key, and
+   there is no migration path — the new key simply can't read old ciphertext.
+   Fallout: the admin/login-client PATs stop decrypting (`CRYPT-OhN2u`,
+   `CRYPT-Eep6o`, "illegal base64 data" in Zitadel's logs — easy to mistake for a
+   corrupted file, since the ciphertext itself is well-formed, just unreadable
+   under the new key) and — unverified at the time this was written, but very
+   plausible given the same key protects Zitadel's own signing keys — end-user
+   token issuance/validation may break too.
+   **If you suspect this:** compare `Parameters:zitadel-masterkey` across every
+   `~/.aspire/deployments/*/<environment>.json` on every machine/checkout that has
+   ever deployed this environment. If they differ, the *running* container's
+   value (`az containerapp secret list` won't show it, but whichever deploy ran
+   most recently won) is very likely NOT what the database was encrypted with.
+   Recover the value from the **oldest** state file (or wherever it was first
+   generated), `az containerapp secret set -n zitadel --secrets
+   zitadel-masterkey=<original>`, force a new revision, and — important — correct
+   the *current* checkout's persisted state file to the same value too, or the
+   next deploy silently repeats this.
+   **There is no code fix for this in `apphost.cs`** — `persist: true` is doing
+   exactly what it's documented to do; the gap is that Aspire's local state isn't
+   itself under version control or shared between checkouts. Treat
+   `~/.aspire/deployments/` as precious, back it up, and never deploy this
+   environment from a checkout that hasn't inherited it.
 
 1. **The Azure Files share must be writable by Zitadel's non-root user.**
    Zitadel runs as `zitadel`, Login V2 as `nextjs`. Locally an init container

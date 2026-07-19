@@ -5,6 +5,37 @@
 #
 # {$VAR} placeholders are substituted from the container's environment by
 # Caddy's own Caddyfile adapter at load time (apphost.cs sets them).
+
+# The headers every request to Zitadel core carries, shared by the two routes
+# below so they cannot drift apart. Each line encodes a separately-discovered
+# requirement — see fixes/2026-07-05-codespaces-oidc-signin.md.
+(zitadel_core_headers) {
+	# Host is the *upstream's* host, not the instance's — see the Login V2
+	# route below. Locally the two are the same value, so this is a no-op
+	# there; in Azure this is what makes the request reach Zitadel at all,
+	# and the header below is what tells Zitadel which instance it is for
+	# (ZITADEL_HTTP1HOSTHEADER in apphost.cs).
+	header_up Host {$ZITADEL_UPSTREAM_HOST}
+	header_up x-zitadel-forward-host {$ZITADEL_HOST_HEADER}
+	# Caddy auto-sets X-Forwarded-Host to the *original* client Host
+	# (e.g. "localhost:8080" or a container-network hostname) even
+	# though header_up Host above overrides the real Host header —
+	# Zitadel prefers X-Forwarded-Host when present, so it has to be
+	# overridden too or instance resolution still mismatches.
+	header_up X-Forwarded-Host {$ZITADEL_HOST_HEADER}
+	# Forced to the *external* scheme rather than passed through.
+	# Zitadel derives both the issuer it stamps on tokens and the
+	# instance it resolves per request from this header. Passing it
+	# through meant browser traffic (arriving via GitHub's
+	# TLS-terminating edge, which sets it to https) got an https
+	# issuer, while server-side callers inside the codespace — e.g.
+	# the API fetching /oidc/v1/userinfo over plain http on
+	# localhost:8080 — sent no such header and were told "access token
+	# invalid", because the token's https issuer no longer matched the
+	# resolved instance. Forcing it makes every caller agree.
+	header_up X-Forwarded-Proto {$ZITADEL_FORWARDED_PROTO}
+}
+
 :{$LISTEN_PORT} {
 	handle /ui/v2/login/* {
 		reverse_proxy {$LOGIN_V2_UPSTREAM} {
@@ -24,36 +55,50 @@
 		}
 	}
 
+	# The admin console bootstraps from this one file, which tells the browser
+	# where the console's own API lives. Zitadel builds that URL as
+	# `{scheme}://{Host header}` and nothing else — internal/api/ui/console:
+	#
+	#     url := http_util.BuildOrigin(r.Host, externalSecure)
+	#
+	# It deliberately ignores x-zitadel-forward-host, X-Forwarded-Host and the
+	# whole DomainContext that every other route resolves the instance from.
+	# So it writes down whatever Host we sent — which, in Azure, has to be the
+	# ACA-internal FQDN or the request never arrives (ACA's ingress routes
+	# strictly by Host and 404s anything else). The browser then can't resolve
+	# that name, and the console loads but cannot make a single API call.
+	#
+	# There is no config knob for it (console's Config exposes only caches,
+	# InstanceManagementURL and PostHog) and upstream main still has the same
+	# line, so this cannot be fixed by configuring or upgrading Zitadel. The
+	# origin is therefore corrected on the way out.
+	#
+	# Locally and in Codespaces this is a no-op by construction: upstream host
+	# and browser-facing host are the same value there (apphost.cs), so search
+	# and replace are identical strings. Only Azure actually differs.
+	#
+	# The scheme is the same on both sides — this fixes the host, not the
+	# scheme. Zitadel's `externalSecure` is what decides the scheme, and it
+	# agrees with ZITADEL_FORWARDED_PROTO because apphost.cs keys --tlsMode and
+	# this variable off the same condition. If those two ever diverge, the
+	# search string stops matching and the console silently breaks again.
+	handle /ui/console/assets/environment.json {
+		replace "{$ZITADEL_FORWARDED_PROTO}://{$ZITADEL_UPSTREAM_HOST}" "{$ZITADEL_FORWARDED_PROTO}://{$ZITADEL_HOST_HEADER}"
+		reverse_proxy {$ZITADEL_UPSTREAM} {
+			import zitadel_core_headers
+			# replace-response cannot rewrite a compressed body, and fails
+			# silently rather than loudly if it meets one.
+			header_up Accept-Encoding identity
+		}
+	}
+
 	# Everything else goes to Zitadel core. Its instance-by-domain resolution
 	# requires the Host header to match ExternalDomain exactly, regardless of
 	# what host the caller (browser or Login V2's own backend) actually used
 	# to reach this proxy — so it's forced here rather than passed through.
 	handle {
 		reverse_proxy {$ZITADEL_UPSTREAM} {
-			# Host is the *upstream's* host, not the instance's — see the
-			# Login V2 route above. Locally the two are the same value, so
-			# this is unchanged there; in Azure this is what makes the request
-			# reach Zitadel at all, and the header below is what tells Zitadel
-			# which instance it is for (ZITADEL_HTTP1HOSTHEADER in apphost.cs).
-			header_up Host {$ZITADEL_UPSTREAM_HOST}
-			header_up x-zitadel-forward-host {$ZITADEL_HOST_HEADER}
-			# Caddy auto-sets X-Forwarded-Host to the *original* client Host
-			# (e.g. "localhost:8080" or a container-network hostname) even
-			# though header_up Host above overrides the real Host header —
-			# Zitadel prefers X-Forwarded-Host when present, so it has to be
-			# overridden too or instance resolution still mismatches.
-			header_up X-Forwarded-Host {$ZITADEL_HOST_HEADER}
-			# Forced to the *external* scheme rather than passed through.
-			# Zitadel derives both the issuer it stamps on tokens and the
-			# instance it resolves per request from this header. Passing it
-			# through meant browser traffic (arriving via GitHub's
-			# TLS-terminating edge, which sets it to https) got an https
-			# issuer, while server-side callers inside the codespace — e.g.
-			# the API fetching /oidc/v1/userinfo over plain http on
-			# localhost:8080 — sent no such header and were told "access token
-			# invalid", because the token's https issuer no longer matched the
-			# resolved instance. Forcing it makes every caller agree.
-			header_up X-Forwarded-Proto {$ZITADEL_FORWARDED_PROTO}
+			import zitadel_core_headers
 		}
 	}
 }

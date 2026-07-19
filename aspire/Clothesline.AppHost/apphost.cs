@@ -242,10 +242,21 @@ var zitadel = builder.AddDockerfile("zitadel", "../../ops/zitadel")
     .WithArgs(
         "start-from-init",
         "--masterkeyFromEnv",
-        // TLS is terminated ahead of Zitadel in both modes — by identity-proxy
+        // TLS is terminated ahead of Zitadel in every mode — by identity-proxy
         // locally, by ACA's ingress in Azure — so Zitadel itself always serves
-        // cleartext and is told about the external scheme via ExternalSecure.
-        "--tlsMode", "disabled",
+        // cleartext. That is what "disabled" and "external" share; where they
+        // differ is what Zitadel then believes about the *browser's* scheme,
+        // and "disabled" means http.
+        //
+        // This flag is the only thing that decides it: cmd/tls/tls.go's
+        // ModeFromFlag does viper.Set("externalSecure", ...), and viper.Set
+        // outranks env vars, so ZITADEL_EXTERNALSECURE cannot influence it (it
+        // used to be set here, and was silently dead — see the ExternalDomain
+        // comment below). "external" — TLS terminated by a component in front —
+        // is the mode spec §5.6(b) prescribes wherever the browser arrives
+        // over https, and it must stay in lockstep with identity-proxy's
+        // ZITADEL_FORWARDED_PROTO below, which the Caddyfile depends on.
+        "--tlsMode", (isPublish || isCodespaces) ? "external" : "disabled",
         "--steps", "/init-steps.yaml"
     )
     // No fixed host port — only identity-proxy (declared below) is exposed on
@@ -253,11 +264,14 @@ var zitadel = builder.AddDockerfile("zitadel", "../../ops/zitadel")
     // endpoint (zitadel.dev.internal:{zitadelPort}) instead.
     .WithHttpEndpoint(targetPort: zitadelPort, name: "http")
     .WithEnvironment("ZITADEL_MASTERKEY", zitadelMasterkey)
-    // ExternalSecure/Domain/Port describe how the *browser* reaches Zitadel, not
-    // how Zitadel listens. In Azure that's HTTPS on the custom domain at 443;
-    // these three must agree with identity-proxy's forwarded proto/host below or
-    // Zitadel resolves the wrong instance and 404s every request.
-    .WithEnvironment("ZITADEL_EXTERNALSECURE", (isPublish || isCodespaces) ? "true" : "false")
+    // ExternalDomain/Port describe how the *browser* reaches Zitadel, not how
+    // Zitadel listens. In Azure that's HTTPS on the custom domain at 443; these
+    // must agree with identity-proxy's forwarded proto/host below or Zitadel
+    // resolves the wrong instance and 404s every request.
+    //
+    // The third of the trio, ExternalSecure, is deliberately NOT set here: the
+    // --tlsMode flag above overwrites it via viper.Set, which no env var can
+    // outrank. Setting it here would read as authoritative while doing nothing.
     .WithEnvironment("ZITADEL_EXTERNALDOMAIN", isPublish
         ? ReferenceExpression.Create($"{identityDomain!}")
         : ReferenceExpression.Create($"{(isCodespaces ? $"{codespaceName}-{zitadelPort}.{codespacePortForwardingDomain}" : "localhost")}"))
@@ -386,8 +400,14 @@ var identityProxy = builder.AddDockerfile("identity-proxy", "../../ops/identity-
         : zitadelExternalHost)
     // The scheme Zitadel should believe it's externally served over — it
     // stamps token issuers and resolves instances from X-Forwarded-Proto, so
-    // it must match ExternalSecure above for both browser and server-side
+    // it must match Zitadel's externalSecure for both browser and server-side
     // callers. See the Caddyfile for why this is forced, not passed through.
+    //
+    // Keep this condition IDENTICAL to --tlsMode's on the zitadel resource,
+    // which is what actually sets externalSecure. Two things break if they
+    // drift: the mismatch this header exists to prevent comes back, and the
+    // Caddyfile's console rewrite — which assumes this value is the scheme
+    // Zitadel emits — stops matching, silently breaking /ui/console again.
     .WithEnvironment("ZITADEL_FORWARDED_PROTO", (isPublish || isCodespaces) ? "https" : "http")
     .WaitFor(zitadel)
     .WaitFor(loginV2);
@@ -493,6 +513,13 @@ var oidcBootstrap = builder.AddDockerfile("zitadel-oidc-bootstrap", "../../ops/z
     // Send that value in the out-of-band header instead of Host when deployed —
     // ACA's ingress owns Host there. Empty locally, where Host is still the way.
     .WithEnvironment("ZITADEL_HOST_HEADER", isPublish ? zitadelHostHeader : "")
+    // This job calls Zitadel directly over plain HTTP inside the container
+    // network — unlike a browser it never sends X-Forwarded-Proto on its own,
+    // and Zitadel 401s the PAT if the (absent-so-"http") scheme it infers
+    // doesn't match its own externalSecure. Must stay keyed off the same
+    // condition as zitadel's --tlsMode above and identity-proxy's
+    // ZITADEL_FORWARDED_PROTO below, or this breaks again.
+    .WithEnvironment("ZITADEL_FORWARDED_PROTO", (isPublish || isCodespaces) ? "https" : "http")
     .WithEnvironment("ADMIN_PAT_PATH", "/machinekey/admin.pat")
     // devMode relaxes OIDC compliance checks to permit non-HTTPS localhost
     // redirects — correct locally, a real weakening of the registration in Azure.

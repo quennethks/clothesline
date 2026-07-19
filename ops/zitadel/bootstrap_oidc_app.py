@@ -46,6 +46,14 @@ ZITADEL_EXTERNAL_HOST = os.environ["ZITADEL_EXTERNAL_HOST"]
 # is therefore configured there to read the instance host from this header instead,
 # leaving Host to ACA. Unset locally, where Host works and no ingress intercepts it.
 ZITADEL_HOST_HEADER = os.environ.get("ZITADEL_HOST_HEADER")
+# Zitadel also resolves the request's scheme from X-Forwarded-Proto (falling
+# back to "http" if absent) and rejects the PAT with 401 if that doesn't match
+# its own externalSecure — the same mismatch documented in
+# fixes/2026-07-10-codespaces-sync-error.md for a different caller. This
+# process talks to Zitadel directly over plain HTTP inside the container
+# network, so unlike a browser it never sends this header on its own; it has
+# to be forced to agree with externalSecure explicitly.
+ZITADEL_FORWARDED_PROTO = os.environ.get("ZITADEL_FORWARDED_PROTO", "http")
 
 PROJECT_NAME = "clothesline"
 APP_NAME = "clothesline-web"
@@ -135,6 +143,7 @@ def main() -> None:
         headers[ZITADEL_HOST_HEADER] = ZITADEL_EXTERNAL_HOST
     else:
         headers["Host"] = ZITADEL_EXTERNAL_HOST
+    headers["X-Forwarded-Proto"] = ZITADEL_FORWARDED_PROTO
     with httpx.Client(
         base_url=API_URL,
         headers=headers,
