@@ -162,19 +162,44 @@ required reviewers or protection rules here later if you want a manual gate.)
 Set these at the **Environment** scope (recommended — each environment gets its own
 values), or at the repository scope if you only ever deploy one environment.
 
-### Secrets (3)
+### Secrets (5)
 
 | Secret | Value |
 |---|---|
 | `AZURE_CLIENT_ID` | the `client_id` from step 1 |
 | `AZURE_TENANT_ID` | the `tenant_id` from step 1 |
 | `AZURE_SUBSCRIPTION_ID` | the `subscription_id` from step 1 |
+| `ZITADEL_MASTERKEY` | a freshly generated 32-char value — **see the callout below before generating one** |
+| `PG_PASSWORD` | a freshly generated strong password — **see the callout below before generating one** |
 
 ```bash
 gh secret set AZURE_CLIENT_ID       --env "$env_name" --repo "$repo" --body "$client_id"
 gh secret set AZURE_TENANT_ID       --env "$env_name" --repo "$repo" --body "$tenant_id"
 gh secret set AZURE_SUBSCRIPTION_ID --env "$env_name" --repo "$repo" --body "$subscription_id"
+
+# Only for an environment this workflow will be provisioning FRESH — see the
+# callout immediately below if that's not the case.
+zitadel_masterkey=$(openssl rand -hex 16)   # 32 hex chars — matches apphost.cs's own generator constraint
+pg_password=$(openssl rand -base64 24)
+gh secret set ZITADEL_MASTERKEY --env "$env_name" --repo "$repo" --body "$zitadel_masterkey"
+gh secret set PG_PASSWORD       --env "$env_name" --repo "$repo" --body "$pg_password"
 ```
+
+> ⚠️ **`ZITADEL_MASTERKEY` and `PG_PASSWORD` are generate-once-ever, not generate-per-setup.**
+> Unlike the three identity secrets above, these two back a *live encryption key and
+> database password* the moment the first deploy runs — Zitadel encrypts everything it
+> stores (PATs, and very plausibly its own signing keys) under `ZITADEL_MASTERKEY`, with
+> no migration path if it later changes. Generating a fresh value here is only correct
+> the **first time** this environment is ever deployed, by anyone, from anywhere.
+>
+> **If this environment has ever been deployed before** — by `aspire deploy` from
+> someone's own checkout, per `DEPLOY.md`'s manual walkthrough — do **not** run
+> `openssl rand` above. Pull the real values instead, from that checkout's own
+> `~/.aspire/deployments/*/<environment-name>.json` (`Parameters:zitadel-masterkey` /
+> `Parameters:pg-password`), and set the GitHub secrets to those. Getting this wrong
+> silently orphans everything already encrypted under the real key — this exact incident
+> already happened once during manual deployment; see `DEPLOY.md`'s "0g" known issue for
+> the full mechanism and how it was recovered.
 
 ### Variables (5)
 
@@ -222,3 +247,4 @@ several steps there are load-bearing and unobvious.
 | Migration step fails on `az keyvault secret show` with **access denied** | The SP lacks the Key Vault **data-plane** role under RBAC auth. Grant **Key Vault Secrets User** on the vault — the second callout in [step 2](#2-give-it-access-rbac). |
 | *"An Azure subscription id is required. Set the Azure:SubscriptionId configuration value."* | This is Aspire, not the login — it reads `Azure__SubscriptionId/Location/ResourceGroup` from the workflow's `env:` block, which are already sourced from your secret/variables. Confirm `AZURE_SUBSCRIPTION_ID` (secret) and `AZURE_LOCATION` (variable) are set for the environment. |
 | Deploy blocks forever with no output | Almost always a missing Aspire parameter prompting interactively. Confirm `IDENTITY_DOMAIN` is set (variable). See [`DEPLOY.md` › Supplying parameters](./DEPLOY.md#supplying-parameters). |
+| The **"Register the OIDC application"** step's job fails, and Zitadel's own logs show a *decrypt* error (`CRYPT-OhN2u`, `CRYPT-Eep6o`, "illegal base64 data") rather than an auth/token error | `ZITADEL_MASTERKEY` doesn't match what's actually encrypted in the database — either it was never set (so a fresh one got minted this run) or it was set to a freshly-generated value against an environment that already existed. See the callout in [step 5](#5-secrets--variables) and `DEPLOY.md`'s "0g" known issue. |

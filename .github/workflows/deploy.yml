@@ -51,6 +51,33 @@ jobs:
       # CNAME/TXT records exist (ops/DEPLOY.md §3). Unset means false — which is what
       # a first deploy into a fresh environment needs.
       Parameters__bind-identity-domain: ${{ vars.IDENTITY_DOMAIN_BOUND }}
+      # Both persist:true in apphost.cs — meaning, unlike the parameters above,
+      # they have a generated default and are only ever meant to be supplied
+      # ONCE, then reused forever. Aspire's *only* memory of "already supplied"
+      # is a local file (~/.aspire/deployments/<hash>/<environment>.json),
+      # which never exists on a GitHub-hosted runner: every job starts with a
+      # clean $HOME. Verified empirically (aspire publish, three runs against a
+      # scratch environment): with no persisted value yet, an explicit
+      # Parameters__* override IS used and then persisted — exactly this
+      # runner's situation, every time. Omitting these would silently mint a
+      # fresh zitadel-masterkey on every single dispatch and push it live,
+      # orphaning every secret Zitadel already encrypted under the old one
+      # (PATs, signing keys) — ops/DEPLOY.md's "0g" known issue, hit manually
+      # once already. Generate once per environment, before its first deploy,
+      # and never regenerate — see GITHUB-ACTIONS-SETUP.md step 5.
+      #
+      # NOTE this override only works because CI never has a persisted value
+      # to begin with — once ANY value is persisted for an environment
+      # (e.g. a human's laptop checkout that has deployed it before), Aspire
+      # prefers that persisted value over this override, every time. If this
+      # workflow is ever pointed at an environment a human has already
+      # deployed from `aspire deploy` locally, these two secrets must be set
+      # to that checkout's actual values (pulled from their own
+      # ~/.aspire/deployments/*/<environment>.json), not freshly generated —
+      # otherwise this workflow's first run diverges from what's already live,
+      # the same way ops/DEPLOY.md's "0g" incident happened.
+      Parameters__zitadel-masterkey: ${{ secrets.ZITADEL_MASTERKEY }}
+      Parameters__pg-password: ${{ secrets.PG_PASSWORD }}
       # `azure/login` below authenticates the ARM credential but does NOT tell
       # Aspire *where* to provision: it does not read the az CLI's active
       # subscription. Without these, the deploy fails in create-provisioning-context
