@@ -14,7 +14,12 @@
     header { padding: 10px 12px; background: #000; }
     header h1 { font-size: 15px; margin: 0; font-weight: 600; }
     header p { font-size: 12px; margin: 2px 0 0; color: #aaa; }
-    .stage { position: relative; width: 100%; max-width: 720px; margin: 0 auto; background: #000; }
+    #banner {
+      display: none; padding: 10px 12px; background: #7f1d1d; color: #fff;
+      font-size: 13px; line-height: 1.4;
+    }
+    #banner.show { display: block; }
+    .stage { position: relative; width: 100%; max-width: 720px; margin: 0 auto; background: #000; min-height: 220px; }
     .stage video, .stage canvas { display: block; width: 100%; height: auto; }
     .stage canvas { position: absolute; inset: 0; }
     .mirror { transform: scaleX(-1); }
@@ -50,8 +55,10 @@
     <p>Throwaway experiment. Camera → on-device AI → boxes. Measures accuracy &amp; speed. Not the real product.</p>
   </header>
 
+  <div id="banner"></div>
+
   <div class="stage">
-    <video id="video" playsinline muted></video>
+    <video id="video" playsinline muted autoplay></video>
     <canvas id="overlay"></canvas>
     <div id="topLabel" class="top-label"></div>
   </div>
@@ -70,6 +77,7 @@
     <button id="flipBtn" disabled>Flip camera</button>
     <label for="modelSel" style="align-self:center;font-size:13px;color:#aaa;">Model:</label>
     <select id="modelSel">
+      <option value="none">camera only (no AI · check responsiveness first)</option>
       <option value="coco-ssd">coco-ssd (Experiment A · plumbing &amp; speed)</option>
       <option value="custom">custom clothing model (Experiment B · edit app.js)</option>
     </select>
@@ -89,13 +97,23 @@
   </div>
 
   <p class="hint">
-    Camera needs <code>https://</code> or <code>localhost</code>. On a laptop: serve this folder and open
-    <code>http://localhost:PORT</code>. On a phone: use an HTTPS tunnel. See <code>README.md</code>.
+    Camera needs <code>https://</code> or <code>localhost</code> (not <code>file://</code>). On a laptop: serve
+    this folder and open <code>http://localhost:PORT</code>. On a phone: use an HTTPS tunnel. See <code>README.md</code>.
+    <br>Tip: start with <b>“camera only”</b> to confirm the camera works before loading a model.
   </p>
 
-  <!-- TensorFlow.js + a ready-made object detector, from CDN (fine for a throwaway PoC) -->
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
+  <!-- TensorFlow.js + a ready-made object detector, from CDN (fine for a throwaway PoC).
+       onerror surfaces a visible banner instead of a silent dead page. -->
+  <script>window.__cdnError = function (what) {
+    var b = document.getElementById('banner');
+    b.className = 'show';
+    b.textContent = 'Could not load ' + what + ' from the CDN. Check your internet/proxy, then reload. '
+      + '(The “camera only” mode still works without it.)';
+  };</script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"
+          onerror="window.__cdnError('TensorFlow.js')"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"
+          onerror="window.__cdnError('the coco-ssd model library')"></script>
   <script src="./app.js"></script>
 </body>
 </html>

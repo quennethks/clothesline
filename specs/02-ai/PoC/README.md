@@ -69,6 +69,20 @@ npx localtunnel --port 8000
 Open the `https://…` URL on the phone, allow the camera, tap **Start**. Use **Flip camera**
 to switch front/back. **Test on a cheap Android**, not a flagship — the whole point is real-world speed.
 
+## Troubleshooting "nothing happens / non-responsive"
+
+The page now surfaces failures as a **red banner** and a **Status** line instead of freezing — read those first, and open the browser console (F12) for detail. Common causes:
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Red banner "not a secure context" | Opened as `file://` (double-clicked the HTML) | Serve it: `python3 -m http.server 8000`, open `http://localhost:8000` |
+| Status stuck on "loading coco-ssd model…" | Model weights can't download (offline/proxy/firewall) | Switch **Model → "camera only"** to confirm the camera works; fix network for the AI model |
+| Red banner "could not load … from the CDN" | The TensorFlow.js CDN scripts were blocked | Check internet/proxy; "camera only" still works without them |
+| Status "camera denied/unavailable" | Camera permission not granted, or not https/localhost | Allow the camera; use localhost or an https tunnel |
+| Nothing on screen but no banner | — | Open the console (F12); the page logs each step with a `[poc]` prefix — tell me the last line |
+
+**Always start with Model = "camera only" and press Start.** That needs *no* download and *no* AI — if the live camera appears, the page is responsive and the issue is only the model/network. If even that fails, it's the camera/secure-context, and the banner will say which.
+
 ## Experiment A — plumbing & speed (½–1 day)
 
 Just run it (steps above) and read the stats:

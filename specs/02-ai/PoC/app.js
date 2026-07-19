@@ -5,19 +5,20 @@
  * laundry, accurately and fast, in a phone browser on a cheap Android?
  *
  * This is a rehearsal, not a foundation. Keep the ANSWER, throw the code away.
- * Do NOT copy this into the real product. See README.md and the parent
- * experiment spec for scope.
+ * Do NOT copy this into the real product. See README.md.
+ *
+ * Design note: every failure mode is made LOUD (visible banner + status +
+ * console) so the page is never silently "non-responsive".
  */
 
 const CATEGORIES = ['Shirts', 'Trousers', 'Shorts', 'Jackets', 'Dresses']; // the real product's AI subset
-
-// Run the model a few times per second, not every frame (mimics the product; keeps the phone cool).
-const THROTTLE_MS = 350;
+const THROTTLE_MS = 350; // run the model a few times/sec, not every frame
 
 // ---- DOM refs ----
 const video = document.getElementById('video');
 const overlay = document.getElementById('overlay');
 const ctx = overlay.getContext('2d');
+const banner = document.getElementById('banner');
 const els = {
   status: document.getElementById('status'),
   backend: document.getElementById('backend'),
@@ -36,29 +37,53 @@ const modelSel = document.getElementById('modelSel');
 let stream = null;
 let facingMode = 'environment';
 let running = false;
-let inferring = false;          // guard: never run two inferences at once
+let inferring = false;
 let lastInferenceTs = 0;
 let cocoModel = null;
 let customModel = null;
-let lastMs = 0, tally = { ok: 0, total: 0 };
+let lastMs = 0;
+let tally = { ok: 0, total: 0 };
+
+// ---- helpers ----
+function setStatus(s) { els.status.textContent = s; console.log('[poc]', s); }
+function showBanner(msg) { banner.textContent = msg; banner.className = 'show'; console.error('[poc]', msg); }
+function clearBanner() { banner.className = ''; banner.textContent = ''; }
+
+// Catch anything that would otherwise die silently.
+window.addEventListener('error', (e) => showBanner('Script error: ' + (e.message || e.error)));
+window.addEventListener('unhandledrejection', (e) =>
+  showBanner('Unhandled error: ' + (e.reason && e.reason.message ? e.reason.message : e.reason)));
 
 // ================================================================
 //  Camera
 // ================================================================
 async function startCamera() {
   stopStream();
-  stream = await navigator.mediaDevices.getUserMedia({
-    video: { facingMode, width: { ideal: 1280 }, height: { ideal: 720 } },
-    audio: false,
-  });
+  setStatus('requesting camera…');
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode, width: { ideal: 1280 }, height: { ideal: 720 } },
+      audio: false,
+    });
+  } catch (err) {
+    throw new Error('Camera denied/unavailable: ' + err.message +
+      ' — allow camera access, and make sure you are on https:// or localhost.');
+  }
   video.srcObject = stream;
-  await video.play();
-  // Mirror the selfie view (and the overlay with it) so it feels natural.
+
+  // Wait for real dimensions before sizing the canvas (avoids a 0×0 overlay).
+  await new Promise((res) => {
+    if (video.readyState >= 1 && video.videoWidth) return res();
+    video.onloadedmetadata = () => res();
+  });
+  try { await video.play(); } catch (_) { /* autoplay attr covers most cases */ }
+
   const mirror = facingMode === 'user';
   video.classList.toggle('mirror', mirror);
   overlay.classList.toggle('mirror', mirror);
-  overlay.width = video.videoWidth;
-  overlay.height = video.videoHeight;
+  overlay.width = video.videoWidth || 640;
+  overlay.height = video.videoHeight || 480;
+  setStatus('camera on (' + overlay.width + '×' + overlay.height + ')');
 }
 
 function stopStream() {
@@ -69,53 +94,42 @@ function stopStream() {
 //  Models
 // ================================================================
 async function ensureModel() {
-  if (modelSel.value === 'coco-ssd') {
+  const which = modelSel.value;
+  if (which === 'none') return 'none';
+
+  if (which === 'coco-ssd') {
+    if (typeof cocoSsd === 'undefined') {
+      throw new Error('coco-ssd library not loaded (CDN blocked?). Use “camera only”, or fix the network and reload.');
+    }
     if (!cocoModel) {
-      setStatus('loading coco-ssd…');
-      // 'lite_mobilenet_v2' is the fastest base — the realistic mobile choice.
+      setStatus('loading coco-ssd model… (first time needs internet)');
       cocoModel = await cocoSsd.load({ base: 'lite_mobilenet_v2' });
     }
     return 'coco-ssd';
   }
-  // ---- Experiment B: your clothing model ----
-  if (!customModel) {
-    customModel = await loadCustomModel();
+
+  // Experiment B
+  if (typeof tf === 'undefined') {
+    throw new Error('TensorFlow.js not loaded (CDN blocked?). Use “camera only”, or fix the network and reload.');
   }
+  if (!customModel) { customModel = await loadCustomModel(); }
   return 'custom';
 }
 
-/*
- * EXPERIMENT B — plug your clothing detector in here.
- *
- * Steps:
- *   1. Get a clothing object-detection model in TensorFlow.js graph-model format
- *      (model.json + weight *.bin shards). See README §"Experiment B".
- *   2. Put the files under ./model/ (or point the URL elsewhere).
- *   3. Fill in decodeCustom() below to turn the raw model outputs into
- *      [{ bbox:[x,y,w,h], label, score }] — output shapes are model-specific.
- *   4. Switch the Model dropdown to "custom".
- */
+/* EXPERIMENT B — plug your clothing detector in here. See README §"Experiment B". */
 const CUSTOM_MODEL_URL = './model/model.json';
 
 async function loadCustomModel() {
   setStatus('loading custom model…');
-  const model = await tf.loadGraphModel(CUSTOM_MODEL_URL);
-  return model;
+  return tf.loadGraphModel(CUSTOM_MODEL_URL);
 }
 
-// Turn ONE video frame into detections using the custom model.
-// NOTE: box-decoding + non-max-suppression are model-specific — adapt this.
 async function detectCustom(model) {
   const INPUT = 320; // set to your model's expected input size
   const input = tf.tidy(() =>
-    tf.browser.fromPixels(video).resizeBilinear([INPUT, INPUT]).toFloat().expandDims(0)
-    // some models want /255 or a specific mean/std — adjust to yours
-  );
+    tf.browser.fromPixels(video).resizeBilinear([INPUT, INPUT]).toFloat().expandDims(0));
   const out = await model.executeAsync(input);
-  // TODO: decode `out` (raw boxes/scores/classes) into detections, then run
-  //       tf.image.nonMaxSuppression to drop overlaps. Left as an exercise
-  //       because every exported model differs. See README.
-  const detections = decodeCustom(out);
+  const detections = decodeCustom(out); // model-specific — fill this in
   tf.dispose(input);
   tf.dispose(out);
   return detections;
@@ -123,8 +137,7 @@ async function detectCustom(model) {
 
 // eslint-disable-next-line no-unused-vars
 function decodeCustom(_rawOutputs) {
-  // Return [{ bbox:[x,y,w,h] (in video pixels), label:string, score:0..1 }]
-  // Map the model's raw labels onto CATEGORIES here.
+  // Return [{ bbox:[x,y,w,h] in video px, label:string, score:0..1 }]; map labels onto CATEGORIES.
   console.warn('decodeCustom() is a stub — fill it in for Experiment B.');
   return [];
 }
@@ -133,40 +146,34 @@ function decodeCustom(_rawOutputs) {
 //  Detection loop
 // ================================================================
 async function detectOnce(which) {
-  let dets = [];
+  if (which === 'none') return [];
   if (which === 'coco-ssd') {
-    // coco-ssd manages its own tensors and returns pixel-space boxes.
     const raw = await cocoModel.detect(video);
-    dets = raw.map((d) => ({ bbox: d.bbox, label: d.class, score: d.score }));
-  } else {
-    dets = await detectCustom(customModel);
+    return raw.map((d) => ({ bbox: d.bbox, label: d.class, score: d.score }));
   }
-  return dets;
+  return detectCustom(customModel);
 }
 
 function loop(ts) {
   if (!running) return;
   requestAnimationFrame(loop);
-  if (inferring) return;                          // no overlapping inference
-  if (ts - lastInferenceTs < THROTTLE_MS) return; // throttle
+  if (inferring) return;
+  if (ts - lastInferenceTs < THROTTLE_MS) return;
   lastInferenceTs = ts;
-  inferring = true;
 
   const which = modelSel.value;
+  if (which === 'none') { draw([]); updateStats(); return; } // camera-only: prove responsiveness
+
+  inferring = true;
   const t0 = performance.now();
   detectOnce(which)
-    .then((dets) => {
-      lastMs = performance.now() - t0;
-      draw(dets);
-      updateStats();
-    })
-    .catch((err) => { console.error(err); setStatus('error: ' + err.message); })
+    .then((dets) => { lastMs = performance.now() - t0; draw(dets); updateStats(); })
+    .catch((err) => showBanner('Detection failed: ' + err.message))
     .finally(() => { inferring = false; });
 }
 
 function draw(dets) {
   ctx.clearRect(0, 0, overlay.width, overlay.height);
-  // Highlight the DOMINANT detection (largest area) — the product presents one item at a time.
   let dominant = null, bestArea = 0;
   for (const d of dets) {
     const area = d.bbox[2] * d.bbox[3];
@@ -186,29 +193,30 @@ function draw(dets) {
 }
 
 function updateStats() {
-  els.ms.textContent = lastMs.toFixed(0);
+  els.ms.textContent = lastMs ? lastMs.toFixed(0) : '0';
   els.fps.textContent = lastMs > 0 ? (1000 / lastMs).toFixed(1) : '—';
-  els.tensors.textContent = tf.memory().numTensors;
+  els.tensors.textContent = (typeof tf !== 'undefined') ? tf.memory().numTensors : '—';
 }
-
-function setStatus(s) { els.status.textContent = s; }
 
 // ================================================================
 //  Controls
 // ================================================================
 startBtn.addEventListener('click', async () => {
+  clearBanner();
+  startBtn.disabled = true;
   try {
-    startBtn.disabled = true;
-    await tf.ready();
-    els.backend.textContent = tf.getBackend();
-    const which = await ensureModel();
+    if (typeof tf !== 'undefined') { await tf.ready(); els.backend.textContent = tf.getBackend(); }
+    const which = await ensureModel();   // may be 'none' → no model needed
     await startCamera();
     running = true;
     setStatus('running (' + which + ')');
     stopBtn.disabled = false; flipBtn.disabled = false;
     requestAnimationFrame(loop);
   } catch (err) {
-    console.error(err); setStatus('error: ' + err.message); startBtn.disabled = false;
+    showBanner(err.message);
+    setStatus('error');
+    startBtn.disabled = false;
+    stopStream();
   }
 });
 
@@ -221,12 +229,11 @@ stopBtn.addEventListener('click', () => {
 
 flipBtn.addEventListener('click', async () => {
   facingMode = facingMode === 'environment' ? 'user' : 'environment';
-  if (running) await startCamera();
+  if (running) { try { await startCamera(); } catch (err) { showBanner(err.message); } }
 });
 
 modelSel.addEventListener('change', () => { if (running) setStatus('switched model — press Stop then Start'); });
 
-// accuracy tally (Experiment B)
 document.getElementById('okBtn').addEventListener('click', () => { tally.ok++; tally.total++; renderScore(); });
 document.getElementById('badBtn').addEventListener('click', () => { tally.total++; renderScore(); });
 document.getElementById('resetBtn').addEventListener('click', () => { tally = { ok: 0, total: 0 }; renderScore(); });
@@ -235,8 +242,12 @@ function renderScore() {
   els.score.textContent = `${tally.ok} / ${tally.total} (${pct})`;
 }
 
-// surface obvious environment problems early
+// ---- environment sanity checks (surfaced, not silent) ----
+if (!window.isSecureContext) {
+  showBanner('Not a secure context — the camera will be blocked. Open via http://localhost:PORT or an https:// URL, not file://.');
+}
 if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-  setStatus('this browser/context has no camera access (need https or localhost)');
+  showBanner('This browser/context exposes no camera API. Use a modern browser over localhost or https.');
   startBtn.disabled = true;
 }
+setStatus('ready — pick a model and press Start');
