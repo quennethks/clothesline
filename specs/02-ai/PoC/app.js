@@ -25,7 +25,8 @@ const els = {
   ms: document.getElementById('ms'),
   fps: document.getElementById('fps'),
   tensors: document.getElementById('tensors'),
-  topLabel: document.getElementById('topLabel'),
+  topMain: document.getElementById('topMain'),
+  topRaw: document.getElementById('topRaw'),
   score: document.getElementById('score'),
 };
 const startBtn = document.getElementById('startBtn');
@@ -40,6 +41,7 @@ let running = false;
 let inferring = false;
 let lastInferenceTs = 0;
 let cocoModel = null;
+let mobilenetModel = null;
 let customModel = null;
 let lastMs = 0;
 let tally = { ok: 0, total: 0 };
@@ -108,12 +110,69 @@ async function ensureModel() {
     return 'coco-ssd';
   }
 
+  if (which === 'mobilenet') {
+    if (typeof mobilenet === 'undefined') {
+      throw new Error('mobilenet library not loaded (CDN blocked?). Use “camera only”, or fix the network and reload.');
+    }
+    if (!mobilenetModel) {
+      setStatus('loading mobilenet model… (first time needs internet)');
+      mobilenetModel = await mobilenet.load({ version: 2, alpha: 1.0 });
+    }
+    return 'mobilenet';
+  }
+
   // Experiment B
   if (typeof tf === 'undefined') {
     throw new Error('TensorFlow.js not loaded (CDN blocked?). Use “camera only”, or fix the network and reload.');
   }
   if (!customModel) { customModel = await loadCustomModel(); }
   return 'custom';
+}
+
+/* ---------------------------------------------------------------
+ * EXPERIMENT A2 — MobileNet as a rough clothing probe.
+ *
+ * MobileNet is an ImageNet classifier, NOT a clothing detector. Two
+ * consequences to keep in mind when reading its answers:
+ *   1. No bounding boxes — it labels the WHOLE frame, so a busy background
+ *      competes with the garment. Fill the frame with the item.
+ *   2. Its garment vocabulary is thin and uneven. Shirts/trousers/dresses are
+ *      reasonably covered; SHORTS barely exist in ImageNet, so expect them to
+ *      fail — that's the vocabulary's fault, not the phone's.
+ * Treat a bad score here as "need a real clothing model" (already the Phase 2
+ * plan), not as "on-device AI can't work".
+ * --------------------------------------------------------------- */
+const IMAGENET_TO_CATEGORY = [
+  [/jersey|t-shirt|tee shirt|sweatshirt|cardigan|sweater|pullover/, 'Shirts'],
+  [/jean|denim|pajama|pyjama|trouser|slack/, 'Trousers'],
+  [/swimming trunks|bathing trunks|short/, 'Shorts'],
+  [/trench coat|fur coat|lab coat|coat|windbreaker|poncho|cloak|jacket|suit/, 'Jackets'],
+  [/gown|hoopskirt|crinoline|overskirt|sarong|miniskirt|abaya|kimono|vestment|robe|dress/, 'Dresses'],
+];
+
+// ImageNet homographs that look like garments to a substring match but aren't:
+// "book jacket" is a dust cover, and it scores high on any book in frame.
+const NOT_GARMENT = /book jacket|dust cover|dust jacket|dust wrapper/;
+
+function mapImagenetLabel(className) {
+  const s = className.toLowerCase();
+  if (NOT_GARMENT.test(s)) return null;
+  for (const [re, category] of IMAGENET_TO_CATEGORY) if (re.test(s)) return category;
+  return null;
+}
+
+async function detectMobilenet(model) {
+  const preds = await model.classify(video, 5);
+  // Take the highest-ranked guess that lands in one of our 5 categories — the
+  // very top guess is often the person holding the garment, or the sofa.
+  for (const p of preds) {
+    const category = mapImagenetLabel(p.className);
+    if (category) return [{ bbox: null, label: category, score: p.probability, raw: p.className }];
+  }
+  // Nothing clothing-ish: still show what it *did* see, so the screen is never
+  // blank and you can tell "no idea" apart from "wrong idea".
+  const top = preds[0];
+  return top ? [{ bbox: null, label: '(not clothing)', score: top.probability, raw: top.className }] : [];
 }
 
 /* EXPERIMENT B — plug your clothing detector in here. See README §"Experiment B". */
@@ -151,6 +210,7 @@ async function detectOnce(which) {
     const raw = await cocoModel.detect(video);
     return raw.map((d) => ({ bbox: d.bbox, label: d.class, score: d.score }));
   }
+  if (which === 'mobilenet') return detectMobilenet(mobilenetModel);
   return detectCustom(customModel);
 }
 
@@ -176,10 +236,12 @@ function draw(dets) {
   ctx.clearRect(0, 0, overlay.width, overlay.height);
   let dominant = null, bestArea = 0;
   for (const d of dets) {
+    if (!d.bbox) { dominant = d; continue; } // whole-frame classification — no box to compare
     const area = d.bbox[2] * d.bbox[3];
     if (area > bestArea) { bestArea = area; dominant = d; }
   }
   for (const d of dets) {
+    if (!d.bbox) continue;
     const [x, y, w, h] = d.bbox;
     const isDom = d === dominant;
     ctx.lineWidth = isDom ? 4 : 2;
@@ -189,7 +251,8 @@ function draw(dets) {
     ctx.fillStyle = isDom ? '#22c55e' : '#94a3b8';
     ctx.fillText(`${d.label} ${(d.score * 100) | 0}%`, x + 4, y + 18);
   }
-  els.topLabel.textContent = dominant ? `${dominant.label}  ·  ${(dominant.score * 100) | 0}%` : '';
+  els.topMain.textContent = dominant ? `${dominant.label}  ·  ${(dominant.score * 100) | 0}%` : '';
+  els.topRaw.textContent = (dominant && dominant.raw) ? dominant.raw : '';
 }
 
 function updateStats() {
@@ -223,7 +286,7 @@ startBtn.addEventListener('click', async () => {
 stopBtn.addEventListener('click', () => {
   running = false; stopStream();
   ctx.clearRect(0, 0, overlay.width, overlay.height);
-  els.topLabel.textContent = '';
+  els.topMain.textContent = ''; els.topRaw.textContent = '';
   setStatus('stopped'); startBtn.disabled = false; stopBtn.disabled = true; flipBtn.disabled = true;
 });
 

@@ -19,9 +19,12 @@
       font-size: 13px; line-height: 1.4;
     }
     #banner.show { display: block; }
-    .stage { position: relative; width: 100%; max-width: 720px; margin: 0 auto; background: #000; min-height: 220px; }
+    .stage { position: relative; width: 100%; max-width: 720px; margin: 0 auto; background: #000; min-height: 220px; overflow: hidden; }
     .stage video, .stage canvas { display: block; width: 100%; height: auto; }
-    .stage canvas { position: absolute; inset: 0; }
+    /* Pure drawing layer: match the stage box exactly, and never eat taps meant
+       for the controls below it (a stray 300x150 canvas will otherwise overflow
+       the stage and sit invisibly on top of the buttons). */
+    .stage canvas { position: absolute; inset: 0; height: 100%; pointer-events: none; }
     .mirror { transform: scaleX(-1); }
     .stats {
       display: flex; flex-wrap: wrap; gap: 8px 16px; padding: 10px 12px;
@@ -32,6 +35,9 @@
       position: absolute; top: 8px; left: 8px; right: 8px; text-align: center;
       font-size: 20px; font-weight: 700; text-shadow: 0 1px 3px #000; pointer-events: none;
     }
+    /* The model's own words, under our mapped category — so a wrong answer
+       shows *why* it was wrong, not just that it was. */
+    #topRaw { display: block; font-size: 13px; font-weight: 400; color: #cbd5e1; }
     .controls { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px; max-width: 720px; margin: 0 auto; }
     button, select {
       font-size: 14px; padding: 10px 14px; border-radius: 8px; border: 1px solid #444;
@@ -60,7 +66,10 @@
   <div class="stage">
     <video id="video" playsinline muted autoplay></video>
     <canvas id="overlay"></canvas>
-    <div id="topLabel" class="top-label"></div>
+    <div class="top-label">
+      <span id="topMain"></span>
+      <span id="topRaw"></span>
+    </div>
   </div>
 
   <div class="stats">
@@ -78,7 +87,8 @@
     <label for="modelSel" style="align-self:center;font-size:13px;color:#aaa;">Model:</label>
     <select id="modelSel">
       <option value="none">camera only (no AI · check responsiveness first)</option>
-      <option value="coco-ssd">coco-ssd (Experiment A · plumbing &amp; speed)</option>
+      <option value="coco-ssd">coco-ssd (Experiment A · plumbing &amp; speed · knows no clothing)</option>
+      <option value="mobilenet">mobilenet (Experiment A2 · rough clothing probe)</option>
       <option value="custom">custom clothing model (Experiment B · edit app.js)</option>
     </select>
   </div>
@@ -114,6 +124,8 @@
           onerror="window.__cdnError('TensorFlow.js')"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"
           onerror="window.__cdnError('the coco-ssd model library')"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet@2.1.1/dist/mobilenet.min.js"
+          onerror="window.__cdnError('the mobilenet model library')"></script>
   <script src="./app.js"></script>
 </body>
 </html>

@@ -27,7 +27,7 @@ Target categories (the product's AI subset): **Shirts, Trousers, Shorts, Jackets
 ```
 PoC/
 ├── index.html   # the whole UI: camera view, detection boxes, speed/tensor stats, accuracy tally
-├── app.js       # camera loop + model loading + drawing (Experiment A works out of the box)
+├── app.js       # camera loop + model loading + drawing (Experiments A / A2 work out of the box)
 └── README.md    # this file
 ```
 
@@ -51,8 +51,12 @@ python3 -m http.server 8000      # or:  npx serve .
 `localhost` is exempt from the HTTPS rule, so the camera works. Click **Start**, allow the
 camera. You'll see boxes + a live **ms/inference** and **tensors** readout.
 
-> coco-ssd (the default model) does **not** know clothing categories — that's expected.
-> Experiment A only proves the pipeline runs and how fast. Point it at anything to watch it work.
+> coco-ssd (the default model) does **not** know clothing categories — that's expected, and it
+> is *not* a sign the PoC is broken. It knows exactly 80 fixed COCO classes (person, car, dog,
+> chair, …); the only wearables in the whole list are tie, backpack, handbag, suitcase and
+> umbrella. Held up a shirt and got "person"? That's correct behaviour — it has no word for
+> "shirt", so it reports the one thing it does recognise. Experiment A only proves the pipeline
+> runs and how fast. For a first clothing signal, use **"mobilenet"** (Experiment A2 below).
 
 ### On a real phone (needed for the real answer)
 
@@ -91,6 +95,31 @@ Just run it (steps above) and read the stats:
 - Does it stay up for ~3 minutes without crashing? (watch `Tensors` — it should stay roughly flat, not climb)
 
 If the pipeline is too slow even here, that's an early red flag independent of the clothing model.
+
+## Experiment A2 — rough clothing probe with MobileNet (~1 hour)
+
+A cheap sanity check to run *before* investing in Experiment B. Switch **Model → "mobilenet"**.
+
+MobileNet is a general **ImageNet** classifier, not a clothing detector — but unlike COCO,
+ImageNet's 1000 categories include a scattering of garment words (`jersey/T-shirt`, `jean`,
+`cardigan`, `sweatshirt`, `trench coat`, `fur coat`, `gown`, `kimono`). `app.js` maps those
+onto our 5 categories, so you get a real accuracy signal today with **no model to train or convert**.
+
+The screen shows **our mapped category** on top and **the model's own words** underneath — so a
+wrong answer tells you *why* it was wrong. (That readout immediately caught MobileNet calling a
+book cover `book jacket` → "Jackets"; there's now a small exclusion list for such traps.)
+
+Know its limits before you trust the number:
+
+| Limit | Consequence |
+|---|---|
+| **No bounding boxes** — it labels the *whole frame* | A cluttered background competes with the garment. Fill the frame with the item. |
+| **Thin, uneven garment vocabulary** | Shirts / trousers / dresses are covered reasonably; **shorts barely exist in ImageNet** and will mostly fail. |
+| It's a classifier, not a detector | It can't test the box-decode / NMS path the real product needs. |
+
+**So a poor score here means "we need a real clothing model" — which is already the Phase 2
+plan — not "on-device AI can't work on this phone."** A *good* score here is a genuine
+encouraging signal. Either way it's an hour, not a week.
 
 ## Experiment B — clothing accuracy (the real test)
 
